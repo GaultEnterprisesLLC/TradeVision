@@ -1,0 +1,139 @@
+/* TradeVision — Global stylesheet
+ * - Tailwind v4 (CSS-first config via @theme)
+ * - Brand design tokens from TradeVision Brand Spec v1
+ * - Google Fonts: Barlow Condensed (display), Barlow (body), IBM Plex Mono (data)
+ *
+ * NEVER hardcode brand hex values in components. Always reference tokens
+ * via Tailwind utility classes (e.g. bg-surface, text-green) or CSS vars.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+@import 'tailwindcss';
+
+/* ============================================================
+   BRAND DESIGN TOKENS
+   Tailwind v4 uses @theme to define design tokens. Every value
+   here becomes a Tailwind utility (e.g. --color-green → bg-green).
+   ============================================================ */
+@theme {
+  /* Core palette — TradeVision Brand Spec v1 */
+  --color-green: #7fe621;        /* Safety Green — primary accent, CTAs, brand */
+  --color-green-bright: #aaff00; /* Hi-vis variant — logo / brand impressions */
+  --color-carbon: #0d1117;       /* Primary background — dark mechanical room ready */
+  --color-surface: #161b22;      /* Card surface */
+  --color-navy: #0f2640;         /* Deep navy — alternate dark surface */
+  --color-border: #2a3444;       /* Borders, dividers, crosshair lines */
+  --color-text: #e6edf3;         /* Primary text on dark */
+  --color-muted: #7d8590;        /* Secondary text, captions, footnotes */
+
+  /* Semantic / state colors */
+  --color-success: #7fe621;      /* Reuses brand green */
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Co-brand (Gault Enterprises) — only used in "Powered by" footer
+     when the tenant is GE. Other tenants get their own colors here. */
+  --color-ge-navy: #3a557c;
+  --color-ge-orange: #ff6720;
+  --color-ge-red: #ee2737;
+
+  /* Typography */
+  --font-display: 'Barlow Condensed', 'Barlow', system-ui, sans-serif;
+  --font-sans: 'Barlow', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  /* Type scale — phone-first */
+  --text-xs: 0.75rem;     /* 12px — micro labels */
+  --text-sm: 0.875rem;    /* 14px — captions, secondary */
+  --text-base: 1rem;      /* 16px — body */
+  --text-lg: 1.125rem;    /* 18px — emphasized body */
+  --text-xl: 1.25rem;     /* 20px — section headers */
+  --text-2xl: 1.5rem;     /* 24px — page headers */
+  --text-3xl: 1.875rem;   /* 30px — display small */
+  --text-4xl: 2.25rem;    /* 36px — display */
+  --text-5xl: 3rem;       /* 48px — hero */
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 24px rgba(127, 230, 33, 0.25);
+}
+
+/* ============================================================
+   BASE STYLES
+   ============================================================ */
+:root {
+  color-scheme: dark;
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100svh;
+  background: var(--color-carbon);
+  color: var(--color-text);
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* All numeric/data values use IBM Plex Mono for instant scannability. */
+.tv-data,
+[data-numeric='true'] {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+/* Display headings use Barlow Condensed, uppercase by default. */
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0;
+  color: var(--color-text);
+}
+
+h1 {
+  font-size: var(--text-4xl);
+  text-transform: uppercase;
+}
+h2 {
+  font-size: var(--text-2xl);
+  text-transform: uppercase;
+}
+h3 {
+  font-size: var(--text-xl);
+}
+
+/* iOS PWA: prevent text size adjust + tap highlight */
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Selection */
+::selection {
+  background: var(--color-green);
+  color: var(--color-carbon);
+}
