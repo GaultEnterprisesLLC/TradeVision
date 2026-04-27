@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Card,
   CardHeader,
@@ -10,45 +10,89 @@ import {
   Select,
   Button,
 } from '@/components/ui';
+import { PricingTierEditor } from '@/components/PricingTierEditor';
+import { PricePreview } from '@/components/PricePreview';
+import type { PricingMode, PricingSettings, PricingTier } from '@/lib/pricing';
 
 /**
- * Company Settings — Stage 1.
+ * Company Settings — Stage 2A.
  *
- * This is the foundation every quote runs on. Local UI state for now;
- * Stage 2 will persist to the `companies` and `company_settings` tables
- * in Supabase via TanStack Query.
+ * Local UI state for now; Stage 2B persists to Supabase via TanStack Query
+ * once auth is wired. Every change to the pricing config flows live into
+ * the PricePreview component below so you can sanity-check before saving.
  *
  * Sections:
- *  - Company identity (name, address, contact, logo, license)
- *  - Pricing mode (markup vs margin)
- *  - State sales tax (applied to pre-tax Webb costs)
- *  - Labor rates (1-tech / 2-tech, by tier — flat per-task in v1)
- *  - Tech tiers (Master, Lead, Apprentice, etc.)
- *  - Overhead allocation ($ per labor-hour, configurable later)
- *  - Supplier defaults (Webb pre-tax flag, default sub electrical rate)
+ *  - Pricing mode (markup vs margin) + flat-rate / tiered toggle
+ *  - Tier editor (when tiered)
+ *  - Live preview
+ *  - State sales tax
+ *  - Labor rates (1-tech / 2-tech, standard + PPP)
+ *  - Overhead allocation
+ *  - Generator electrical default
+ *  - Supplier (FW Webb) cost basis
  */
-type PricingMode = 'markup' | 'margin';
 type SubMode = 'in_house' | 'subbed';
+type RateMode = 'flat' | 'tiered';
 
 export default function Settings() {
-  // Pricing
+  // ---------- PRICING MODE ----------
   const [pricingMode, setPricingMode] = useState<PricingMode>('markup');
-  const [defaultMarkup, setDefaultMarkup] = useState(0.5); // 50%
-  const [defaultMargin, setDefaultMargin] = useState(0.4); // 40%
+  const [rateMode, setRateMode] = useState<RateMode>('flat');
+  const [defaultMarkup, setDefaultMarkup] = useState(0.5);
+  const [defaultMargin, setDefaultMargin] = useState(0.4);
+
+  // Default tier sets — sensible starting point lifted from contractor
+  // flat-rate book convention, editable by the user.
+  const [markupTiers, setMarkupTiers] = useState<PricingTier[]>([
+    { max_cost_cents: 20000, rate: 2.0 },
+    { max_cost_cents: 30000, rate: 1.5 },
+    { max_cost_cents: 50000, rate: 1.0 },
+    { max_cost_cents: null, rate: 0.67 },
+  ]);
+  const [marginTiers, setMarginTiers] = useState<PricingTier[]>([
+    { max_cost_cents: 20000, rate: 0.6 },
+    { max_cost_cents: 50000, rate: 0.5 },
+    { max_cost_cents: null, rate: 0.4 },
+  ]);
+
+  // ---------- TAX ----------
   const [stateTax, setStateTax] = useState(0.0625); // MA
 
-  // Labor
-  const [laborOneTech, setLaborOneTech] = useState(22500); // $225.00
-  const [laborTwoTech, setLaborTwoTech] = useState(30000); // $300.00
-  const [laborOneTechPpp, setLaborOneTechPpp] = useState(20000); // $200.00
-  const [laborTwoTechPpp, setLaborTwoTechPpp] = useState(27500); // $275.00
+  // ---------- LABOR ----------
+  const [laborOneTech, setLaborOneTech] = useState(22500); // $225/hr
+  const [laborTwoTech, setLaborTwoTech] = useState(30000); // $300/hr
+  const [laborOneTechPpp, setLaborOneTechPpp] = useState(20000); // $200/hr
+  const [laborTwoTechPpp, setLaborTwoTechPpp] = useState(27500); // $275/hr
 
-  // Overhead
-  const [overheadPerHour, setOverheadPerHour] = useState(2500); // $25/hr placeholder
+  // ---------- OVERHEAD ----------
+  const [overheadPerHour, setOverheadPerHour] = useState(2500); // $25/hr
 
-  // Generator electrical default
+  // ---------- GENERATOR ELECTRICAL ----------
   const [subMode, setSubMode] = useState<SubMode>('subbed');
-  const [defaultSubRate, setDefaultSubRate] = useState(150000); // $1500 placeholder
+  const [defaultSubRate, setDefaultSubRate] = useState(150000); // $1500
+
+  // ---------- LIVE PRICING SETTINGS (fed to PricePreview) ----------
+  const livePricingSettings: PricingSettings = useMemo(
+    () => ({
+      pricing_mode: pricingMode,
+      default_markup: defaultMarkup,
+      default_margin: defaultMargin,
+      // Empty tiers = flat-rate mode (engine falls back to defaults)
+      markup_tiers: rateMode === 'tiered' ? markupTiers : [],
+      margin_tiers: rateMode === 'tiered' ? marginTiers : [],
+      state_tax_rate: stateTax,
+      cost_basis: 'pre_tax',
+    }),
+    [
+      pricingMode,
+      rateMode,
+      defaultMarkup,
+      defaultMargin,
+      markupTiers,
+      marginTiers,
+      stateTax,
+    ],
+  );
 
   return (
     <div className="px-4 py-6 flex flex-col gap-5">
@@ -59,14 +103,14 @@ export default function Settings() {
         </p>
       </header>
 
-      {/* PRICING MODE */}
+      {/* ============ PRICING ============ */}
       <Card>
         <CardHeader>
-          <CardTitle>Pricing Mode</CardTitle>
+          <CardTitle>Pricing</CardTitle>
         </CardHeader>
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
           <Toggle
-            label="Default mode"
+            label="Mode"
             options={[
               { value: 'markup', label: 'Markup' },
               { value: 'margin', label: 'Margin' },
@@ -75,29 +119,61 @@ export default function Settings() {
             onChange={setPricingMode}
             hint={
               pricingMode === 'markup'
-                ? 'Customer price = cost × (1 + markup %)'
-                : 'Customer price = cost ÷ (1 − margin %)'
+                ? 'Price = cost × (1 + markup %)'
+                : 'Price = cost ÷ (1 − margin %)'
             }
           />
-          {pricingMode === 'markup' ? (
-            <PercentInput
-              label="Default markup"
-              value={defaultMarkup}
-              onChange={setDefaultMarkup}
-              hint="Applied to Webb cost basis (post-tax)."
-            />
+
+          <Toggle
+            label="Rate structure"
+            options={[
+              { value: 'flat', label: 'Flat rate' },
+              { value: 'tiered', label: 'Tiered' },
+            ]}
+            value={rateMode}
+            onChange={setRateMode}
+            hint={
+              rateMode === 'tiered'
+                ? 'Different rates by cost bracket — small parts higher, big-ticket lower.'
+                : 'One rate applied to every line item.'
+            }
+          />
+
+          {rateMode === 'flat' ? (
+            pricingMode === 'markup' ? (
+              <PercentInput
+                label="Default markup"
+                value={defaultMarkup}
+                onChange={setDefaultMarkup}
+                hint="Applied to every material line."
+              />
+            ) : (
+              <PercentInput
+                label="Target gross margin"
+                value={defaultMargin}
+                onChange={setDefaultMargin}
+                hint="Applied to every material line."
+              />
+            )
           ) : (
-            <PercentInput
-              label="Target gross margin"
-              value={defaultMargin}
-              onChange={setDefaultMargin}
-              hint="Applied to Webb cost basis (post-tax)."
+            <PricingTierEditor
+              mode={pricingMode}
+              tiers={pricingMode === 'markup' ? markupTiers : marginTiers}
+              onChange={pricingMode === 'markup' ? setMarkupTiers : setMarginTiers}
             />
           )}
         </div>
       </Card>
 
-      {/* STATE TAX */}
+      {/* ============ LIVE PREVIEW ============ */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Live preview</CardTitle>
+        </CardHeader>
+        <PricePreview settings={livePricingSettings} />
+      </Card>
+
+      {/* ============ STATE TAX ============ */}
       <Card>
         <CardHeader>
           <CardTitle>State Sales Tax</CardTitle>
@@ -110,39 +186,23 @@ export default function Settings() {
         />
       </Card>
 
-      {/* LABOR */}
+      {/* ============ LABOR ============ */}
       <Card>
         <CardHeader>
           <CardTitle>Labor Rates</CardTitle>
         </CardHeader>
         <div className="grid grid-cols-2 gap-3">
-          <MoneyInput
-            label="1-tech rate / hr"
-            value={laborOneTech}
-            onChange={setLaborOneTech}
-          />
-          <MoneyInput
-            label="2-tech rate / hr"
-            value={laborTwoTech}
-            onChange={setLaborTwoTech}
-          />
-          <MoneyInput
-            label="PPP 1-tech / hr"
-            value={laborOneTechPpp}
-            onChange={setLaborOneTechPpp}
-          />
-          <MoneyInput
-            label="PPP 2-tech / hr"
-            value={laborTwoTechPpp}
-            onChange={setLaborTwoTechPpp}
-          />
+          <MoneyInput label="1-tech / hr" value={laborOneTech} onChange={setLaborOneTech} />
+          <MoneyInput label="2-tech / hr" value={laborTwoTech} onChange={setLaborTwoTech} />
+          <MoneyInput label="PPP 1-tech / hr" value={laborOneTechPpp} onChange={setLaborOneTechPpp} />
+          <MoneyInput label="PPP 2-tech / hr" value={laborTwoTechPpp} onChange={setLaborTwoTechPpp} />
         </div>
         <p className="text-xs text-[var(--color-muted)] mt-3">
           HVAC replacements default to 2-tech pricing.
         </p>
       </Card>
 
-      {/* OVERHEAD */}
+      {/* ============ OVERHEAD ============ */}
       <Card>
         <CardHeader>
           <CardTitle>Overhead Allocation</CardTitle>
@@ -155,7 +215,7 @@ export default function Settings() {
         />
       </Card>
 
-      {/* GENERATOR / SUB DEFAULTS */}
+      {/* ============ GENERATOR ELECTRICAL ============ */}
       <Card>
         <CardHeader>
           <CardTitle>Generator Electrical</CardTitle>
@@ -182,7 +242,7 @@ export default function Settings() {
         </div>
       </Card>
 
-      {/* WEBB SUPPLIER */}
+      {/* ============ WEBB SUPPLIER ============ */}
       <Card>
         <CardHeader>
           <CardTitle>Supplier — FW Webb</CardTitle>
@@ -192,11 +252,7 @@ export default function Settings() {
             <option value="pre_tax">Pre-tax (TradeVision adds state tax)</option>
             <option value="post_tax">Post-tax (already includes tax)</option>
           </Select>
-          <Input
-            label="Account number"
-            placeholder="Pending Webb integration"
-            disabled
-          />
+          <Input label="Account number" placeholder="Pending Webb integration" disabled />
           <p className="text-xs text-[var(--color-muted)]">
             Direct API integration is in progress. Until live, Webb pricing
             loads from a CSV import or manual entry.

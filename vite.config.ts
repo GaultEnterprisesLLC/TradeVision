@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -69,5 +70,10 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true, // expose on LAN so you can test on your phone
+  },
+  test: {
+    environment: 'node', // pricing engine is pure — no DOM needed
+    globals: true,       // describe/it/expect available without imports
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 })
