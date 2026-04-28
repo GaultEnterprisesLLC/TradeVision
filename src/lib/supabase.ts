@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-import type { Database } from '@/types/database';
 
 /**
  * Supabase client — singleton.
@@ -11,6 +10,13 @@ import type { Database } from '@/types/database';
  *
  * The Secret API key (sb_secret_*) is for server-side Edge Functions only
  * and is never imported here.
+ *
+ * Note on types: we deliberately don't pass a Database generic to
+ * createClient() — instead each query function in src/lib/queries casts
+ * its return type explicitly. This avoids version-coupling our schema
+ * types to @supabase/supabase-js internals (which change between minor
+ * versions). When we install the Supabase CLI and run
+ * `supabase gen types typescript`, we'll switch to the generic.
  */
 
 const url = import.meta.env.VITE_SUPABASE_URL;
@@ -22,7 +28,7 @@ if (!url || !key) {
   );
 }
 
-export const supabase = createClient<Database>(url, key, {
+export const supabase = createClient(url, key, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
