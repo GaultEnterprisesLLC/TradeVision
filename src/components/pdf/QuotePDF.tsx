@@ -24,7 +24,6 @@ import {
   Line,
   Text,
   View,
-  Font,
 } from '@react-pdf/renderer';
 import { money, moneyWhole } from '@/lib/format';
 import type {
@@ -35,36 +34,22 @@ import type {
 } from '@/lib/pdf/composeQuoteForPDF';
 
 // ---------------------------------------------------------------------
-// FONTS — register Google Fonts with @react-pdf
+// FONTS
 // ---------------------------------------------------------------------
-// react-pdf needs explicit font URLs (it doesn't reuse browser-loaded
-// fonts). Pulling TTF files directly from Google's static font server.
-
-Font.register({
-  family: 'Barlow',
-  fonts: [
-    { src: 'https://fonts.gstatic.com/s/barlow/v12/7cHpv4kjgoGqM7E_DMs5.ttf', fontWeight: 400 },
-    { src: 'https://fonts.gstatic.com/s/barlow/v12/7cHqv4kjgoGqM7E3w-oc4Ock.ttf', fontWeight: 500 },
-    { src: 'https://fonts.gstatic.com/s/barlow/v12/7cHqv4kjgoGqM7E3t-ww4Ock.ttf', fontWeight: 600 },
-    { src: 'https://fonts.gstatic.com/s/barlow/v12/7cHqv4kjgoGqM7E3_-8w4Ock.ttf', fontWeight: 700 },
-  ],
-});
-
-Font.register({
-  family: 'Barlow Condensed',
-  fonts: [
-    { src: 'https://fonts.gstatic.com/s/barlowcondensed/v12/HTxwL3I-JCGChYJ8VI-L6OO_au7B.ttf', fontWeight: 600 },
-    { src: 'https://fonts.gstatic.com/s/barlowcondensed/v12/HTxwL3I-JCGChYJ8VI-L6OO_au7B.ttf', fontWeight: 700 },
-  ],
-});
-
-Font.register({
-  family: 'IBM Plex Mono',
-  fonts: [
-    { src: 'https://fonts.gstatic.com/s/ibmplexmono/v19/-F63fjptAgt5VM-kVkqdyU8n5igg1l9kn-s.ttf', fontWeight: 400 },
-    { src: 'https://fonts.gstatic.com/s/ibmplexmono/v19/-F6qfjptAgt5VM-kVkqdyU8n3vAOwl1FlQ.ttf', fontWeight: 500 },
-  ],
-});
+// Using react-pdf's built-in fonts (Helvetica / Helvetica-Bold / Courier).
+// They're shipped with the renderer — zero network, work offline, never
+// 404 when Google rotates their CDN paths.
+//
+// TODO (post-trial polish): self-host Barlow / Barlow Condensed / IBM
+// Plex Mono via @fontsource so the PDF matches the brand spec
+// typography. The trial-blocker is delivering quotes, not typography
+// fidelity, so Helvetica ships now and brand fonts ship later.
+const FONT = {
+  body: 'Helvetica',
+  bodyBold: 'Helvetica-Bold',
+  display: 'Helvetica-Bold',
+  mono: 'Courier',
+};
 
 // ---------------------------------------------------------------------
 // STYLES (StyleSheet, not Tailwind — react-pdf has its own subset)
@@ -84,7 +69,7 @@ const COLOR = {
 const styles = StyleSheet.create({
   page: {
     backgroundColor: COLOR.bg,
-    fontFamily: 'Barlow',
+    fontFamily: FONT.body,
     fontSize: 10,
     color: COLOR.text,
     paddingTop: 36,
@@ -104,7 +89,7 @@ const styles = StyleSheet.create({
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   brandWordmark: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 22,
     fontWeight: 700,
     letterSpacing: 1,
@@ -113,14 +98,14 @@ const styles = StyleSheet.create({
   brandVision: { color: COLOR.green, fontWeight: 700 },
   headerRight: { alignItems: 'flex-end' },
   headerLabel: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 9,
     color: COLOR.muted,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
   headerValue: {
-    fontFamily: 'IBM Plex Mono',
+    fontFamily: FONT.mono,
     fontSize: 11,
     color: COLOR.text,
     marginTop: 1,
@@ -134,7 +119,7 @@ const styles = StyleSheet.create({
   },
   metaCol: { flexDirection: 'column', gap: 2, flex: 1 },
   metaLabel: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 8,
     color: COLOR.muted,
     letterSpacing: 1.2,
@@ -146,7 +131,7 @@ const styles = StyleSheet.create({
 
   // ---------- section ----------
   sectionTitle: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 12,
     fontWeight: 700,
     letterSpacing: 1.2,
@@ -171,8 +156,8 @@ const styles = StyleSheet.create({
   lineDescription: { fontSize: 10, color: COLOR.text, fontWeight: 500 },
   lineDetails: { fontSize: 8, color: COLOR.muted, marginTop: 2, lineHeight: 1.35 },
   lineRight: { width: 90, alignItems: 'flex-end' },
-  lineQty: { fontSize: 8, color: COLOR.muted, fontFamily: 'IBM Plex Mono' },
-  linePrice: { fontSize: 10, color: COLOR.text, fontFamily: 'IBM Plex Mono', fontWeight: 500 },
+  lineQty: { fontSize: 8, color: COLOR.muted, fontFamily: FONT.mono },
+  linePrice: { fontSize: 10, color: COLOR.text, fontFamily: FONT.mono, fontWeight: 500 },
 
   // ---------- option header ----------
   optionHeader: {
@@ -192,19 +177,19 @@ const styles = StyleSheet.create({
     borderColor: COLOR.green,
   },
   optionLabel: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 11,
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   optionPrice: {
-    fontFamily: 'IBM Plex Mono',
+    fontFamily: FONT.mono,
     fontSize: 12,
     fontWeight: 600,
   },
   selectedChip: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 8,
     color: COLOR.green,
     backgroundColor: COLOR.text,
@@ -228,7 +213,7 @@ const styles = StyleSheet.create({
   addonName: { fontSize: 10, color: COLOR.text, fontWeight: 600 },
   addonDesc: { fontSize: 8, color: COLOR.muted, marginTop: 2 },
   addonStateChip: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 7,
     paddingHorizontal: 4,
     paddingVertical: 1,
@@ -255,7 +240,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   totalsLabel: { fontSize: 10, color: COLOR.muted },
-  totalsValue: { fontSize: 11, fontFamily: 'IBM Plex Mono', color: COLOR.text },
+  totalsValue: { fontSize: 11, fontFamily: FONT.mono, color: COLOR.text },
   totalsGrand: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -266,14 +251,14 @@ const styles = StyleSheet.create({
     borderTopColor: COLOR.border,
   },
   totalsGrandLabel: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 14,
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: 1.2,
   },
   totalsGrandValue: {
-    fontFamily: 'IBM Plex Mono',
+    fontFamily: FONT.mono,
     fontSize: 18,
     fontWeight: 600,
     color: COLOR.text,
@@ -303,14 +288,14 @@ const styles = StyleSheet.create({
   },
   footerLeft: { fontSize: 8, color: COLOR.muted },
   footerCenter: {
-    fontFamily: 'Barlow Condensed',
+    fontFamily: FONT.display,
     fontSize: 8,
     color: COLOR.muted,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
   footerPage: {
-    fontFamily: 'IBM Plex Mono',
+    fontFamily: FONT.mono,
     fontSize: 8,
     color: COLOR.muted,
   },
