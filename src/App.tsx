@@ -1,5 +1,11 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  Outlet,
+} from 'react-router-dom';
 import { AuthProvider } from '@/lib/auth/AuthProvider';
 import { AppShell } from '@/components/AppShell';
 import { RequireAuth } from '@/components/RequireAuth';
@@ -18,7 +24,9 @@ const QuotePreview = lazy(() => import('@/routes/QuotePreview'));
 /**
  * App router.
  * - Public routes: /sign-in, /auth/callback
- * - Authenticated routes: everything inside <RequireAuth><AppShell />
+ * - Auth-protected, AppShell-wrapped: most routes (bottom nav, mobile width)
+ * - Auth-protected, full-screen: /quotes/:id/preview (the PDF viewer needs
+ *   the whole viewport — no bottom nav, no max-w-md cage)
  */
 export default function App() {
   return (
@@ -29,7 +37,31 @@ export default function App() {
           <Route path="/sign-in" element={<SignIn />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {/* Authenticated app shell */}
+          {/* Auth-protected, FULL SCREEN — no AppShell. */}
+          <Route
+            element={
+              <RequireAuth>
+                <Outlet />
+              </RequireAuth>
+            }
+          >
+            <Route
+              path="/quotes/:id/preview"
+              element={
+                <Suspense
+                  fallback={
+                    <div className="min-h-screen flex items-center justify-center text-sm text-[var(--color-muted)]">
+                      Loading PDF preview…
+                    </div>
+                  }
+                >
+                  <QuotePreview />
+                </Suspense>
+              }
+            />
+          </Route>
+
+          {/* Auth-protected, app shell + bottom nav. */}
           <Route
             element={
               <RequireAuth>
@@ -40,20 +72,6 @@ export default function App() {
             <Route index element={<Navigate to="/quotes" replace />} />
             <Route path="/quotes" element={<Quotes />} />
             <Route path="/quotes/:id/edit" element={<QuoteEditor />} />
-            <Route
-              path="/quotes/:id/preview"
-              element={
-                <Suspense
-                  fallback={
-                    <div className="px-4 py-12 text-center text-sm text-[var(--color-muted)]">
-                      Loading PDF preview…
-                    </div>
-                  }
-                >
-                  <QuotePreview />
-                </Suspense>
-              }
-            />
             <Route path="/new" element={<New />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/more" element={<More />} />

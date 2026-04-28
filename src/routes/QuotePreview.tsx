@@ -91,9 +91,15 @@ export default function QuotePreview() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--color-border)]">
+    <div
+      className="flex flex-col bg-[var(--color-carbon)]"
+      style={{ height: '100svh' }}
+    >
+      {/* Toolbar — full width, no AppShell wrapper. */}
+      <div
+        className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}
+      >
         <Link
           to={`/quotes/${quote.id}/edit`}
           className="text-sm text-[var(--color-muted)] hover:text-[var(--color-text)]"
@@ -115,10 +121,13 @@ export default function QuotePreview() {
       </div>
 
       {error && (
-        <p className="text-xs text-[var(--color-danger)] px-4 py-2">{error}</p>
+        <p className="text-xs text-[var(--color-danger)] px-4 py-2 text-center">
+          {error}
+        </p>
       )}
 
-      {/* Inline PDF — lazy-loaded chunk */}
+      {/* Inline PDF — lazy-loaded chunk. flex-1 + min-h-0 makes the iframe
+          fill the remaining viewport height. */}
       <Suspense
         fallback={
           <div className="flex-1 flex items-center justify-center text-sm text-[var(--color-muted)]">
@@ -126,9 +135,8 @@ export default function QuotePreview() {
           </div>
         }
       >
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 bg-white">
           <PDFViewerLazy
-            // PDFViewer requires width/height; fill the container.
             style={{ width: '100%', height: '100%', border: 'none' }}
             showToolbar
           >
