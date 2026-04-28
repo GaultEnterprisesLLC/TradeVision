@@ -14,6 +14,7 @@
     "import:fp-items": "node scripts/import_fp_items.mjs"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^4.5.1",
     "@supabase/supabase-js": "^2.104.1",
     "@tanstack/react-query": "^5.100.5",
     "dexie": "^4.4.2",

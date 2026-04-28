@@ -233,6 +233,19 @@ export default function QuoteEditor() {
           </Button>
         )}
 
+        {/* PDF: available any time there are lines. Routes to the inline
+            preview where the user can review, then tap "Send to customer". */}
+        {lines.length > 0 && (
+          <Button
+            fullWidth
+            size="md"
+            variant="secondary"
+            onClick={() => navigate(`/quotes/${quote.id}/preview`)}
+          >
+            Preview PDF
+          </Button>
+        )}
+
         {quote.status === 'ready' && (
           <Button
             fullWidth
