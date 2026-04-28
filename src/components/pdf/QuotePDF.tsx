@@ -1,18 +1,22 @@
 /**
- * QuotePDF — TradeVision customer-facing proposal PDF.
+ * QuotePDF — Customer-facing proposal PDF.
  *
  * Built with @react-pdf/renderer (in-browser PDF generation, no server).
  * The data model is built upstream by composeQuoteForPDF — this file is
  * pure layout.
  *
- * Brand notes:
- *   - Background WHITE for printability + email-friendly previews
- *     (the dark UI is for the field tool; PDFs go to homeowners).
- *   - Brand green Safety Green #7FE621 used as accent for chips,
- *     selected-option highlight, and the green dot in the aperture mark.
- *   - Typography: Barlow (body), Barlow Condensed (display), IBM Plex Mono
- *     (numerics). Loaded via Google Fonts hosting at Document init.
- *   - Required footer on every page: "Powered by TradeVision · tradevision.us"
+ * Brand: this is the GAULT ENTERPRISES customer-facing proposal. The
+ * tenant's brand (GE) leads. TradeVision appears small at the bottom
+ * as a "powered by" engine credit (white-label model).
+ *
+ *   - Header: GE logo + "Gault Enterprises" wordmark
+ *   - Accent color: GE Orange (#FF6720) for selected-option highlight
+ *     and section title underlines
+ *   - Body text: Navy (#3A557C) for headings, dark for line items
+ *   - Footer: small TradeVision aperture + wordmark + tradevision.us
+ *
+ * White background for printability + email-friendly previews (the
+ * dark UI is the field tool; PDFs go to homeowners).
  */
 
 import {
@@ -22,6 +26,7 @@ import {
   Svg,
   Circle,
   Line,
+  Image,
   Text,
   View,
 } from '@react-pdf/renderer';
@@ -37,13 +42,10 @@ import type {
 // FONTS
 // ---------------------------------------------------------------------
 // Using react-pdf's built-in fonts (Helvetica / Helvetica-Bold / Courier).
-// They're shipped with the renderer — zero network, work offline, never
-// 404 when Google rotates their CDN paths.
+// Zero network, work offline, never break.
 //
 // TODO (post-trial polish): self-host Barlow / Barlow Condensed / IBM
-// Plex Mono via @fontsource so the PDF matches the brand spec
-// typography. The trial-blocker is delivering quotes, not typography
-// fidelity, so Helvetica ships now and brand fonts ship later.
+// Plex Mono via @fontsource so PDF matches brand spec typography.
 const FONT = {
   body: 'Helvetica',
   bodyBold: 'Helvetica-Bold',
@@ -52,19 +54,33 @@ const FONT = {
 };
 
 // ---------------------------------------------------------------------
-// STYLES (StyleSheet, not Tailwind — react-pdf has its own subset)
+// COLOR PALETTE — Gault Enterprises brand
 // ---------------------------------------------------------------------
 
 const COLOR = {
-  green: '#7FE621',
-  text: '#0D1117',
-  muted: '#7D8590',
-  border: '#D0D7DE',
+  // GE brand
+  navy: '#3A557C',
+  orange: '#FF6720',
+  red: '#EE2737',
+  navySoft: '#E8EEF6',  // tinted navy for surfaces
+  orangeSoft: '#FFF1E8', // tinted orange for selected backgrounds
+
+  // Neutrals
+  text: '#1A1F2B',
+  muted: '#6B7280',
+  border: '#D8DEE6',
   bg: '#FFFFFF',
   surface: '#F6F8FA',
-  greenBg: '#EFFEC7',
-  red: '#CF222E',
+
+  // TradeVision (only used in tiny footer engine credit)
+  tvGreen: '#7FE621',
+  tvCarbon: '#0D1117',
+  tvBorder: '#2A3444',
 };
+
+// ---------------------------------------------------------------------
+// STYLES (StyleSheet, not Tailwind — react-pdf has its own subset)
+// ---------------------------------------------------------------------
 
 const styles = StyleSheet.create({
   page: {
@@ -73,7 +89,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: COLOR.text,
     paddingTop: 36,
-    paddingBottom: 56, // leave room for the absolute-positioned footer
+    paddingBottom: 64, // leave room for the absolute-positioned footer
     paddingHorizontal: 36,
   },
 
@@ -81,27 +97,35 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     marginBottom: 18,
     paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: COLOR.border,
+    borderBottomWidth: 2,
+    borderBottomColor: COLOR.navy,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  brandWordmark: {
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  geLogo: { width: 44, height: 44 },
+  geWordmarkBlock: { flexDirection: 'column' },
+  geWordmark: {
     fontFamily: FONT.display,
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: 700,
-    letterSpacing: 1,
+    color: COLOR.navy,
+    letterSpacing: 0.5,
   },
-  brandTrade: { color: COLOR.text },
-  brandVision: { color: COLOR.green, fontWeight: 700 },
+  geTagline: {
+    fontSize: 8,
+    color: COLOR.muted,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
   headerRight: { alignItems: 'flex-end' },
   headerLabel: {
     fontFamily: FONT.display,
-    fontSize: 9,
+    fontSize: 8,
     color: COLOR.muted,
-    letterSpacing: 1,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
   headerValue: {
@@ -126,7 +150,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 2,
   },
-  metaValue: { fontSize: 11, color: COLOR.text, fontWeight: 600 },
+  metaValue: { fontSize: 11, color: COLOR.navy, fontWeight: 600 },
   metaSub: { fontSize: 9, color: COLOR.muted, marginTop: 1 },
 
   // ---------- section ----------
@@ -136,9 +160,9 @@ const styles = StyleSheet.create({
     fontWeight: 700,
     letterSpacing: 1.2,
     textTransform: 'uppercase',
-    color: COLOR.text,
+    color: COLOR.navy,
     borderBottomWidth: 1,
-    borderBottomColor: COLOR.border,
+    borderBottomColor: COLOR.orange,
     paddingBottom: 4,
     marginTop: 14,
     marginBottom: 8,
@@ -172,9 +196,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   optionHeaderSelected: {
-    backgroundColor: COLOR.greenBg,
-    borderWidth: 1,
-    borderColor: COLOR.green,
+    backgroundColor: COLOR.orangeSoft,
+    borderWidth: 1.5,
+    borderColor: COLOR.orange,
   },
   optionLabel: {
     fontFamily: FONT.display,
@@ -191,10 +215,10 @@ const styles = StyleSheet.create({
   selectedChip: {
     fontFamily: FONT.display,
     fontSize: 8,
-    color: COLOR.green,
-    backgroundColor: COLOR.text,
-    paddingHorizontal: 5,
-    paddingVertical: 1.5,
+    color: COLOR.bg,
+    backgroundColor: COLOR.orange,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     borderRadius: 2,
     letterSpacing: 1,
     textTransform: 'uppercase',
@@ -215,24 +239,24 @@ const styles = StyleSheet.create({
   addonStateChip: {
     fontFamily: FONT.display,
     fontSize: 7,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
     borderRadius: 2,
     letterSpacing: 1,
     textTransform: 'uppercase',
     marginRight: 6,
   },
-  chipSelected: { backgroundColor: COLOR.green, color: COLOR.text },
+  chipSelected: { backgroundColor: COLOR.orange, color: COLOR.bg },
   chipNot: { backgroundColor: COLOR.surface, color: COLOR.muted },
 
   // ---------- totals ----------
   totalsCard: {
     marginTop: 14,
-    padding: 10,
+    padding: 12,
     borderWidth: 1,
-    borderColor: COLOR.border,
+    borderColor: COLOR.navy,
     borderRadius: 4,
-    backgroundColor: COLOR.surface,
+    backgroundColor: COLOR.navySoft,
   },
   totalsRow: {
     flexDirection: 'row',
@@ -248,7 +272,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: COLOR.border,
+    borderTopColor: COLOR.navy,
   },
   totalsGrandLabel: {
     fontFamily: FONT.display,
@@ -256,12 +280,13 @@ const styles = StyleSheet.create({
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: 1.2,
+    color: COLOR.navy,
   },
   totalsGrandValue: {
     fontFamily: FONT.mono,
     fontSize: 18,
     fontWeight: 600,
-    color: COLOR.text,
+    color: COLOR.navy,
   },
 
   // ---------- notes ----------
@@ -274,25 +299,44 @@ const styles = StyleSheet.create({
   notesText: { fontSize: 9, color: COLOR.text, lineHeight: 1.45 },
 
   // ---------- footer ----------
+  // The TradeVision "powered by" credit. Subtle, brand-correct (dark
+  // chip on white page), positioned bottom-center on every page.
   footer: {
     position: 'absolute',
-    bottom: 24,
+    bottom: 18,
     left: 36,
     right: 36,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 8,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: COLOR.border,
   },
-  footerLeft: { fontSize: 8, color: COLOR.muted },
-  footerCenter: {
-    fontFamily: FONT.display,
-    fontSize: 8,
+  poweredBy: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  poweredByLabel: {
+    fontSize: 7,
     color: COLOR.muted,
-    letterSpacing: 1,
+    letterSpacing: 1.5,
     textTransform: 'uppercase',
+    marginRight: 2,
+  },
+  tvWordmark: {
+    fontFamily: FONT.display,
+    fontSize: 9,
+    letterSpacing: 0.5,
+  },
+  tvWordmarkTrade: { color: COLOR.text },
+  tvWordmarkVision: { color: COLOR.tvGreen },
+  tvUrl: {
+    fontFamily: FONT.mono,
+    fontSize: 7,
+    color: COLOR.muted,
+    marginLeft: 4,
   },
   footerPage: {
     fontFamily: FONT.mono,
@@ -302,24 +346,22 @@ const styles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------
-// APERTURE LOGOMARK (SVG, brand-correct)
+// TRADEVISION APERTURE MARK (small, for footer "powered by" credit)
 // ---------------------------------------------------------------------
 
-function ApertureMark({ size = 22 }: { size?: number }) {
+function TradeVisionAperture({ size = 12 }: { size?: number }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 64 64">
-      <Circle cx="32" cy="32" r="26" stroke={COLOR.green} strokeWidth="3" fill="none" />
-      {/* Crosshair */}
-      <Line x1="32" y1="2" x2="32" y2="22" stroke={COLOR.text} strokeWidth="2" />
-      <Line x1="32" y1="42" x2="32" y2="62" stroke={COLOR.text} strokeWidth="2" />
-      <Line x1="2" y1="32" x2="22" y2="32" stroke={COLOR.text} strokeWidth="2" />
-      <Line x1="42" y1="32" x2="62" y2="32" stroke={COLOR.text} strokeWidth="2" />
-      {/* Cardinal ticks */}
-      <Line x1="32" y1="6" x2="32" y2="14" stroke={COLOR.green} strokeWidth="3" />
-      <Line x1="32" y1="50" x2="32" y2="58" stroke={COLOR.green} strokeWidth="3" />
-      <Line x1="6" y1="32" x2="14" y2="32" stroke={COLOR.green} strokeWidth="3" />
-      <Line x1="50" y1="32" x2="58" y2="32" stroke={COLOR.green} strokeWidth="3" />
-      <Circle cx="32" cy="32" r="4" fill={COLOR.green} />
+      <Circle cx="32" cy="32" r="26" stroke={COLOR.tvGreen} strokeWidth="3" fill="none" />
+      <Line x1="32" y1="2" x2="32" y2="22" stroke={COLOR.tvBorder} strokeWidth="2" />
+      <Line x1="32" y1="42" x2="32" y2="62" stroke={COLOR.tvBorder} strokeWidth="2" />
+      <Line x1="2" y1="32" x2="22" y2="32" stroke={COLOR.tvBorder} strokeWidth="2" />
+      <Line x1="42" y1="32" x2="62" y2="32" stroke={COLOR.tvBorder} strokeWidth="2" />
+      <Line x1="32" y1="6" x2="32" y2="14" stroke={COLOR.tvGreen} strokeWidth="3" />
+      <Line x1="32" y1="50" x2="32" y2="58" stroke={COLOR.tvGreen} strokeWidth="3" />
+      <Line x1="6" y1="32" x2="14" y2="32" stroke={COLOR.tvGreen} strokeWidth="3" />
+      <Line x1="50" y1="32" x2="58" y2="32" stroke={COLOR.tvGreen} strokeWidth="3" />
+      <Circle cx="32" cy="32" r="4" fill={COLOR.tvGreen} />
     </Svg>
   );
 }
@@ -332,11 +374,14 @@ function Header({ doc }: { doc: PDFDocumentModel }) {
   return (
     <View style={styles.headerRow}>
       <View style={styles.headerLeft}>
-        <ApertureMark />
-        <Text style={styles.brandWordmark}>
-          <Text style={styles.brandTrade}>Trade</Text>
-          <Text style={styles.brandVision}>Vision</Text>
-        </Text>
+        <Image src="/ge-logo.png" style={styles.geLogo} />
+        <View style={styles.geWordmarkBlock}>
+          <Text style={styles.geWordmark}>{doc.company.name}</Text>
+          {doc.company.legal_name &&
+            doc.company.legal_name !== doc.company.name && (
+              <Text style={styles.geTagline}>{doc.company.legal_name}</Text>
+            )}
+        </View>
       </View>
       <View style={styles.headerRight}>
         <Text style={styles.headerLabel}>Quote</Text>
@@ -413,10 +458,24 @@ function OptionBlock({ option }: { option: PDFOption }) {
         }
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={styles.optionLabel}>{option.label}</Text>
+          <Text
+            style={[
+              styles.optionLabel,
+              { color: option.is_selected ? COLOR.orange : COLOR.navy },
+            ]}
+          >
+            {option.label}
+          </Text>
           {option.is_selected && <Text style={styles.selectedChip}>Selected</Text>}
         </View>
-        <Text style={styles.optionPrice}>{moneyWhole(option.price_total_cents)}</Text>
+        <Text
+          style={[
+            styles.optionPrice,
+            { color: option.is_selected ? COLOR.orange : COLOR.navy },
+          ]}
+        >
+          {moneyWhole(option.price_total_cents)}
+        </Text>
       </View>
 
       {option.lines.map((l) => (
@@ -527,11 +586,23 @@ function NotesBlock({ doc }: { doc: PDFDocumentModel }) {
   );
 }
 
+/**
+ * Footer — required on every page per brand spec. The TradeVision credit
+ * is small ("Powered by") so the GE proposal feels GE-owned, while still
+ * carrying the platform attribution the white-label model relies on.
+ */
 function Footer() {
   return (
     <View style={styles.footer} fixed>
-      <Text style={styles.footerLeft}>{` `}</Text>
-      <Text style={styles.footerCenter}>Powered by TradeVision · tradevision.us</Text>
+      <View style={styles.poweredBy}>
+        <Text style={styles.poweredByLabel}>Powered by</Text>
+        <TradeVisionAperture size={12} />
+        <Text style={styles.tvWordmark}>
+          <Text style={styles.tvWordmarkTrade}>Trade</Text>
+          <Text style={styles.tvWordmarkVision}>Vision</Text>
+        </Text>
+        <Text style={styles.tvUrl}>tradevision.us</Text>
+      </View>
       <Text
         style={styles.footerPage}
         render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`}
