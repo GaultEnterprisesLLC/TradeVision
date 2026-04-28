@@ -60,7 +60,18 @@ export interface QuoteLine {
   description: string;
   quantity: number;          // can be fractional (e.g. hours, linear feet)
   unit_cost_cents: number;   // pre-tax for materials; final $ for labor/overhead/permits
+  /**
+   * Which Option this line belongs to. 'all' = the line applies to every
+   * Option (e.g. labor shared across alternatives). Ignored when addon_id
+   * is set — addon lines are scoped to their package, not to options.
+   */
   variant: Variant;
+  /**
+   * When non-null/undefined, this line belongs to an Add-on Package
+   * rather than an Option. Addon lines are summed per-addon and excluded
+   * from option totals.
+   */
+  addon_id?: string | null;
   /**
    * Optional per-line override of the markup/margin rate.
    * - For materials/subs/addons, bypasses tier lookup when set.
@@ -93,11 +104,55 @@ export interface VariantTotal {
   margin_fraction: number;
 }
 
+/** Same shape as VariantTotal — distinct alias for clarity at call sites. */
+export type AddonTotal = VariantTotal;
+
 export interface PricingResult {
   lines: PricedLine[];
+  /**
+   * Per-Option totals — only includes lines with addon_id == null.
+   * Addon lines are summed separately into `addons`.
+   */
   variants: {
     good: VariantTotal;
     better: VariantTotal;
     best: VariantTotal;
   };
+  /** Per-addon totals keyed by addon_id. Empty object if no addon lines. */
+  addons: Record<string, AddonTotal>;
+}
+
+/**
+ * Args for computeGrandTotal — the customer-facing single number that
+ * combines the selected Option, the customer's selected Add-ons, and any
+ * applied discounts.
+ */
+export interface GrandTotalArgs {
+  result: PricingResult;
+  /** Which Option the customer picked. */
+  selected_variant: 'good' | 'better' | 'best';
+  /** Which Add-on Packages the customer ticked Selected. */
+  selected_addon_ids: string[];
+  /** Sum of all discount amounts (positive cents). 0 if none. */
+  discount_amount_cents: number;
+}
+
+export interface GrandTotalResult {
+  /** Selected Option's price total (no addons, no discounts). */
+  options_price_cents: number;
+  /** Sum of selected addons' price totals. */
+  addons_price_cents: number;
+  /** Sum applied as deduction. */
+  discount_cents: number;
+  /** options + addons − discount. The customer-facing single number. */
+  grand_total_cents: number;
+  /** Same breakdown for cost (so we can compute realized margin). */
+  options_cost_cents: number;
+  addons_cost_cents: number;
+  /** options_cost + addons_cost (no discount on cost side). */
+  grand_cost_cents: number;
+  /** Profit in cents on the realized job. */
+  margin_cents: number;
+  /** Profit as a share of grand total price. */
+  margin_fraction: number;
 }

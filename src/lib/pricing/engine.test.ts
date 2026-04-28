@@ -16,6 +16,7 @@ import type {
   QuoteLine,
 } from './types';
 import {
+  computeGrandTotal,
   findTierRate,
   priceLine,
   priceQuote,
@@ -467,5 +468,232 @@ describe('previewMaterialPrice', () => {
     const result = previewMaterialPrice(20000, tieredSettings);
     // $200 + 6.25% tax = $212.50, which is > $200 cap, so falls to 150% tier
     expect(result.applied_rate).toBe(1.5);
+  });
+});
+
+// ---------------------------------------------------------------------
+// priceQuote — Add-on Packages (addon_id-scoped lines)
+// ---------------------------------------------------------------------
+
+describe('priceQuote — addon lines', () => {
+  it('addon lines are excluded from option (variant) totals', () => {
+    const lines: QuoteLine[] = [
+      // Primary scope — equipment
+      {
+        line_type: 'material',
+        description: 'Heat pump',
+        quantity: 1,
+        unit_cost_cents: 500000,
+        variant: 'good',
+      },
+      // Add-on package — UV light install
+      {
+        line_type: 'material',
+        description: 'Reme Halo-LED UV Light',
+        quantity: 1,
+        unit_cost_cents: 56500,
+        variant: 'all',
+        addon_id: 'addon-uv',
+      },
+    ];
+
+    const result = priceQuote(lines, flatSettings);
+
+    // The variant total should reflect ONLY the heat pump, not the UV light.
+    // Heat pump $5000 + 6.25% tax = $5312.50 × 1.5 = $7968.75
+    expect(result.variants.good.price_total_cents).toBe(796875);
+
+    // The UV light should appear as its own addon bucket.
+    expect(Object.keys(result.addons)).toEqual(['addon-uv']);
+    // $565 + 6.25% tax = $600.31 × 1.5 = $900.47
+    expect(result.addons['addon-uv'].price_total_cents).toBeGreaterThan(0);
+  });
+
+  it("variant='all' addon lines do NOT bleed into options", () => {
+    // Sanity: even if the addon line is variant='all', it should be in
+    // the addon bucket only — not added to good/better/best.
+    const lines: QuoteLine[] = [
+      {
+        line_type: 'labor',
+        description: 'Hourly install',
+        quantity: 1,
+        unit_cost_cents: 23200,
+        variant: 'all',
+        addon_id: 'addon-uv',
+      },
+    ];
+    const result = priceQuote(lines, flatSettings);
+    expect(result.variants.good.price_total_cents).toBe(0);
+    expect(result.variants.better.price_total_cents).toBe(0);
+    expect(result.variants.best.price_total_cents).toBe(0);
+    expect(result.addons['addon-uv'].price_total_cents).toBe(23200);
+  });
+
+  it('groups multiple addons separately', () => {
+    const lines: QuoteLine[] = [
+      // UV light addon
+      {
+        line_type: 'material',
+        description: 'UV light',
+        quantity: 1,
+        unit_cost_cents: 56500,
+        variant: 'all',
+        addon_id: 'addon-uv',
+      },
+      // Humidifier addon — different addon_id
+      {
+        line_type: 'material',
+        description: 'Steam humidifier',
+        quantity: 1,
+        unit_cost_cents: 90930,
+        variant: 'all',
+        addon_id: 'addon-hum',
+      },
+    ];
+    const result = priceQuote(lines, flatSettings);
+    expect(Object.keys(result.addons).sort()).toEqual(['addon-hum', 'addon-uv']);
+    expect(result.addons['addon-uv'].price_total_cents).not.toBe(
+      result.addons['addon-hum'].price_total_cents,
+    );
+  });
+
+  it('returns an empty addons object when no addon lines exist', () => {
+    const result = priceQuote(
+      [
+        {
+          line_type: 'material',
+          description: 'just a part',
+          quantity: 1,
+          unit_cost_cents: 10000,
+          variant: 'all',
+        },
+      ],
+      flatSettings,
+    );
+    expect(result.addons).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------
+// computeGrandTotal — selected option + selected addons − discounts
+// ---------------------------------------------------------------------
+
+describe('computeGrandTotal', () => {
+  function buildResult() {
+    return priceQuote(
+      [
+        // Option lines
+        {
+          line_type: 'material',
+          description: 'Heat pump',
+          quantity: 1,
+          unit_cost_cents: 500000,
+          variant: 'good',
+        },
+        {
+          line_type: 'labor',
+          description: 'Install labor',
+          quantity: 1,
+          unit_cost_cents: 240000,
+          variant: 'all',
+        },
+        // UV light addon
+        {
+          line_type: 'material',
+          description: 'UV light',
+          quantity: 1,
+          unit_cost_cents: 56500,
+          variant: 'all',
+          addon_id: 'uv',
+        },
+        // Humidifier addon
+        {
+          line_type: 'material',
+          description: 'Humidifier',
+          quantity: 1,
+          unit_cost_cents: 90000,
+          variant: 'all',
+          addon_id: 'hum',
+        },
+      ],
+      flatSettings,
+    );
+  }
+
+  it("just the selected option, no addons, no discount", () => {
+    const result = buildResult();
+    const g = computeGrandTotal({
+      result,
+      selected_variant: 'good',
+      selected_addon_ids: [],
+      discount_amount_cents: 0,
+    });
+    expect(g.options_price_cents).toBe(result.variants.good.price_total_cents);
+    expect(g.addons_price_cents).toBe(0);
+    expect(g.discount_cents).toBe(0);
+    expect(g.grand_total_cents).toBe(g.options_price_cents);
+  });
+
+  it('adds selected addons to the grand total', () => {
+    const result = buildResult();
+    const g = computeGrandTotal({
+      result,
+      selected_variant: 'good',
+      selected_addon_ids: ['uv'],
+      discount_amount_cents: 0,
+    });
+    expect(g.addons_price_cents).toBe(result.addons['uv'].price_total_cents);
+    expect(g.grand_total_cents).toBe(
+      g.options_price_cents + g.addons_price_cents,
+    );
+  });
+
+  it('subtracts a discount from the grand total', () => {
+    const result = buildResult();
+    const g = computeGrandTotal({
+      result,
+      selected_variant: 'good',
+      selected_addon_ids: ['uv', 'hum'],
+      discount_amount_cents: 100000, // $1000 off
+    });
+    expect(g.discount_cents).toBe(100000);
+    expect(g.grand_total_cents).toBe(
+      g.options_price_cents + g.addons_price_cents - 100000,
+    );
+  });
+
+  it('clamps a negative discount to zero (defensive)', () => {
+    const result = buildResult();
+    const g = computeGrandTotal({
+      result,
+      selected_variant: 'good',
+      selected_addon_ids: [],
+      discount_amount_cents: -500,
+    });
+    expect(g.discount_cents).toBe(0);
+  });
+
+  it('ignores a selected addon id that no longer exists', () => {
+    const result = buildResult();
+    const g = computeGrandTotal({
+      result,
+      selected_variant: 'good',
+      selected_addon_ids: ['uv', 'ghost-addon'],
+      discount_amount_cents: 0,
+    });
+    expect(g.addons_price_cents).toBe(result.addons['uv'].price_total_cents);
+  });
+
+  it('reports a coherent realized margin', () => {
+    const result = buildResult();
+    const g = computeGrandTotal({
+      result,
+      selected_variant: 'good',
+      selected_addon_ids: ['uv'],
+      discount_amount_cents: 0,
+    });
+    expect(g.margin_cents).toBe(g.grand_total_cents - g.grand_cost_cents);
+    expect(g.margin_fraction).toBeGreaterThan(0);
+    expect(g.margin_fraction).toBeLessThan(1);
   });
 });

@@ -10,18 +10,26 @@ import {
   Select,
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
-import { money, percent } from '@/lib/format';
+import { money, moneyWhole, percent } from '@/lib/format';
 import {
+  computeHeadlineGrandTotal,
   computeQuoteResult,
   effectivePricing,
   useAddLine,
+  useCreateAddon,
+  useCreateDiscount,
+  useDeleteAddon,
+  useDeleteDiscount,
   useDeleteLine,
   useDeleteQuote,
   useMarkReady,
   useQuote,
+  useQuoteAddons,
+  useQuoteDiscounts,
   useQuoteLines,
   useRecalcQuoteTotals,
   useReopenQuote,
+  useUpdateAddon,
   useUpdateLine,
   useUpdateQuote,
 } from '@/lib/queries/quotes';
@@ -30,6 +38,8 @@ import type { PricingResult, PricingSettings } from '@/lib/pricing/types';
 import type {
   LineType,
   Quote,
+  QuoteAddon,
+  QuoteDiscount,
   QuoteLineItem,
   SelectedVariant,
   Variant,
@@ -60,6 +70,8 @@ export default function QuoteEditor() {
   const { data: liveSettings } = useCompanySettings(company?.id);
   const { data: quote, isLoading: quoteLoading, error: quoteError } = useQuote(quoteId);
   const { data: lines = [] } = useQuoteLines(quoteId);
+  const { data: addons = [] } = useQuoteAddons(quoteId);
+  const { data: discounts = [] } = useQuoteDiscounts(quoteId);
 
   const updateQuote = useUpdateQuote();
   const recalc = useRecalcQuoteTotals();
@@ -76,6 +88,40 @@ export default function QuoteEditor() {
     () => (pricing ? computeQuoteResult(lines, pricing) : null),
     [lines, pricing],
   );
+
+  // Lines split by where they belong: option-scope (no addon_id) vs.
+  // addon-scope (one addon_id each). Addon lines never appear in the
+  // primary "Lines" section.
+  const optionLines = useMemo(
+    () => lines.filter((l) => l.addon_id == null),
+    [lines],
+  );
+  const linesByAddon = useMemo(() => {
+    const map = new Map<string, QuoteLineItem[]>();
+    for (const l of lines) {
+      if (l.addon_id == null) continue;
+      const arr = map.get(l.addon_id) ?? [];
+      arr.push(l);
+      map.set(l.addon_id, arr);
+    }
+    return map;
+  }, [lines]);
+
+  // Single recalc trigger reused after every line / addon / discount change.
+  const onAfterMutation = () => {
+    if (!pricing || !quote) return;
+    if (quote.status === 'draft') {
+      updateQuote.mutate({
+        quoteId: quote.id,
+        patch: { status: 'in_progress' },
+      });
+    }
+    recalc.mutate({
+      quoteId: quote.id,
+      pricing,
+      selected_variant: quote.selected_variant,
+    });
+  };
 
   // ---------- Render guards ----------
   if (quoteLoading) {
@@ -122,33 +168,42 @@ export default function QuoteEditor() {
 
       <CustomerCard quote={quote} disabled={isFrozen} onSave={updateQuote.mutateAsync} />
 
+      <WorkOrderCard
+        quote={quote}
+        disabled={isFrozen}
+        onSave={updateQuote.mutateAsync}
+      />
+
       <LinesCard
         quote={quote}
-        lines={lines}
+        lines={optionLines}
         pricing={pricing}
         disabled={isFrozen}
-        onAfterMutation={() => {
-          if (!pricing || !quote) return;
-          // Auto-flip draft → in_progress on first edit.
-          if (quote.status === 'draft') {
-            updateQuote.mutate({
-              quoteId: quote.id,
-              patch: { status: 'in_progress' },
-            });
-          }
-          // Sync the parent quote's totals with the latest line set.
-          recalc.mutate({
-            quoteId: quote.id,
-            pricing,
-            selected_variant: quote.selected_variant,
-          });
-        }}
+        onAfterMutation={onAfterMutation}
+      />
+
+      <AddonsSection
+        quote={quote}
+        addons={addons}
+        linesByAddon={linesByAddon}
+        pricing={pricing}
+        disabled={isFrozen}
+        onAfterMutation={onAfterMutation}
+      />
+
+      <DiscountsSection
+        quote={quote}
+        discounts={discounts}
+        disabled={isFrozen}
+        onAfterMutation={onAfterMutation}
       />
 
       {result && pricing && (
         <TotalsCard
           quote={quote}
           result={result}
+          addons={addons}
+          discounts={discounts}
           disabled={isFrozen}
           onSelectVariant={(v) => {
             if (!quote) return;
@@ -156,7 +211,6 @@ export default function QuoteEditor() {
               quoteId: quote.id,
               patch: { selected_variant: v },
             });
-            // Also rewrite headline totals to reflect the new selection.
             recalc.mutate({
               quoteId: quote.id,
               pricing,
@@ -384,6 +438,8 @@ function LineEditor({
   disabled,
   onAfterMutation,
   onCancel,
+  /** When set, this LineEditor is scoped to an Add-on Package — variant picker is hidden, addon_id is set on save. */
+  addonId,
 }: {
   line: QuoteLineItem | null;
   quoteId: string;
@@ -391,8 +447,10 @@ function LineEditor({
   disabled: boolean;
   onAfterMutation: () => void;
   onCancel?: () => void;
+  addonId?: string;
 }) {
   const isNew = line === null;
+  const inAddon = addonId != null;
 
   const [lineType, setLineType] = useState<LineType>(line?.line_type ?? 'material');
   const [description, setDescription] = useState(line?.description ?? '');
@@ -434,9 +492,10 @@ function LineEditor({
           description: description.trim(),
           quantity: qty,
           unit_cost_cents: unitCost,
-          variant,
+          variant: inAddon ? 'all' : variant,
           item_id: null,
           position: 0,
+          addon_id: addonId ?? null,
         },
         pricing,
       });
@@ -507,13 +566,15 @@ function LineEditor({
         disabled={disabled}
       />
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className={cn('grid gap-3', inAddon ? 'grid-cols-1' : 'grid-cols-2')}>
         <MoneyInput
           label="Unit cost"
           value={unitCost}
           onChange={setUnitCost}
         />
-        <VariantPicker value={variant} onChange={setVariant} disabled={disabled} />
+        {!inAddon && (
+          <VariantPicker value={variant} onChange={setVariant} disabled={disabled} />
+        )}
       </div>
 
       {/* Live single-line preview, only when fields are filled in. */}
@@ -687,11 +748,15 @@ function VariantPicker({
 function TotalsCard({
   quote,
   result,
+  addons,
+  discounts,
   disabled,
   onSelectVariant,
 }: {
   quote: Quote;
   result: PricingResult;
+  addons: QuoteAddon[];
+  discounts: QuoteDiscount[];
   disabled: boolean;
   onSelectVariant: (v: SelectedVariant) => void;
 }) {
@@ -701,15 +766,24 @@ function TotalsCard({
     { key: 'best', label: 'Best' },
   ];
 
+  const selectedVariant: SelectedVariant = quote.selected_variant ?? 'better';
+  const grand = useMemo(
+    () => computeHeadlineGrandTotal(result, quote.selected_variant, addons, discounts),
+    [result, quote.selected_variant, addons, discounts],
+  );
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Totals</CardTitle>
       </CardHeader>
-      <div className="flex flex-col gap-2">
+
+      {/* Per-Option chooser. Selecting one becomes the basis of the grand total. */}
+      <div className="flex flex-col gap-2 mb-4">
         {variants.map((v) => {
           const t = result.variants[v.key];
-          const selected = quote.selected_variant === v.key;
+          const selected = selectedVariant === v.key;
+          const empty = t.price_total_cents === 0;
           return (
             <button
               key={v.key}
@@ -722,6 +796,7 @@ function TotalsCard({
                 selected
                   ? 'border-[var(--color-green)] shadow-[var(--shadow-glow)]'
                   : 'border-[var(--color-border)]',
+                empty && 'opacity-60',
                 disabled ? 'cursor-default' : 'cursor-pointer hover:border-[var(--color-green)]',
               )}
             >
@@ -730,7 +805,7 @@ function TotalsCard({
                   className="text-sm uppercase tracking-wider"
                   style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }}
                 >
-                  {v.label}
+                  {quote.option_labels?.[v.key] || v.label}
                 </div>
                 <div className="text-xs text-[var(--color-muted)] mt-0.5">
                   Margin {percent(t.margin_fraction)}
@@ -748,12 +823,73 @@ function TotalsCard({
           );
         })}
       </div>
+
+      {/* Grand total breakdown — selected option + selected addons − discounts */}
+      <div className="flex flex-col gap-1 pt-3 border-t border-[var(--color-border)]">
+        <TotalRow
+          label="Selected option"
+          value={grand.options_price_cents}
+          dim={selectedVariant !== quote.selected_variant}
+        />
+        {grand.addons_price_cents > 0 && (
+          <TotalRow label="Selected add-ons" value={grand.addons_price_cents} />
+        )}
+        {grand.discount_cents > 0 && (
+          <TotalRow
+            label="Discounts"
+            value={-grand.discount_cents}
+            danger
+          />
+        )}
+        <div className="flex items-center justify-between pt-2 mt-1 border-t border-[var(--color-border)]">
+          <span
+            className="text-sm uppercase tracking-wider"
+            style={{ fontFamily: 'var(--font-display)', fontWeight: 700 }}
+          >
+            Total
+          </span>
+          <span className="text-xl tabular-nums [font-family:var(--font-mono)] text-[var(--color-green)]">
+            {moneyWhole(grand.grand_total_cents)}
+          </span>
+        </div>
+        <div className="flex items-center justify-end text-xs text-[var(--color-muted)]">
+          Realized margin {percent(grand.margin_fraction)}
+        </div>
+      </div>
+
       {!disabled && (
         <p className="text-xs text-[var(--color-muted)] mt-3">
-          Tap a tier to mark it as the customer's selection.
+          Tap an option to mark it as the customer's selection.
         </p>
       )}
     </Card>
+  );
+}
+
+function TotalRow({
+  label,
+  value,
+  dim,
+  danger,
+}: {
+  label: string;
+  value: number;
+  dim?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between text-sm">
+      <span className={cn('text-[var(--color-muted)]', dim && 'opacity-60')}>{label}</span>
+      <span
+        className={cn(
+          'tabular-nums [font-family:var(--font-mono)]',
+          danger ? 'text-[var(--color-danger)]' : 'text-[var(--color-text)]',
+          dim && 'opacity-60',
+        )}
+      >
+        {money(value)}
+      </span>
+    </div>
   );
 }
 
@@ -786,6 +922,482 @@ function StatusChip({ status, fromFP }: { status: Quote['status']; fromFP: boole
         </span>
       )}
     </div>
+  );
+}
+
+// =====================================================================
+// WORK ORDER CARD (description + customer-facing notes)
+// =====================================================================
+
+function WorkOrderCard({
+  quote,
+  disabled,
+  onSave,
+}: {
+  quote: Quote;
+  disabled: boolean;
+  onSave: (args: {
+    quoteId: string;
+    patch: { work_order_description?: string | null; notes?: string | null };
+  }) => Promise<Quote>;
+}) {
+  const [desc, setDesc] = useState(quote.work_order_description ?? '');
+  const [notes, setNotes] = useState(quote.notes ?? '');
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const dirty =
+    (quote.work_order_description ?? '') !== desc ||
+    (quote.notes ?? '') !== notes;
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave({
+        quoteId: quote.id,
+        patch: {
+          work_order_description: desc || null,
+          notes: notes || null,
+        },
+      });
+      setSavedAt(Date.now());
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Work Order</CardTitle>
+      </CardHeader>
+      <div className="flex flex-col gap-3">
+        <FieldTextarea
+          label="Scope of work"
+          value={desc}
+          onChange={setDesc}
+          placeholder="e.g. Remove existing HVAC system and install entirely new heat pump…"
+          rows={3}
+          disabled={disabled}
+        />
+        <FieldTextarea
+          label="Notes (customer-facing)"
+          value={notes}
+          onChange={setNotes}
+          placeholder="Mass Save rebate amount, financing terms, etc."
+          rows={4}
+          disabled={disabled}
+        />
+        {!disabled && (
+          <div className="flex items-center justify-between">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleSave}
+              disabled={!dirty || saving}
+            >
+              {saving ? 'Saving…' : 'Save work order'}
+            </Button>
+            {savedAt && !dirty && (
+              <span className="text-xs text-[var(--color-green)]">Saved.</span>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/** Inline textarea component matching the Input visual style. */
+function FieldTextarea({
+  label,
+  value,
+  onChange,
+  placeholder,
+  rows = 3,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  rows?: number;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label
+        className="text-xs uppercase tracking-wider text-[var(--color-muted)]"
+        style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }}
+      >
+        {label}
+      </label>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={rows}
+        disabled={disabled}
+        className={cn(
+          'px-3 py-2 bg-[var(--color-carbon)] border rounded-[var(--radius-md)]',
+          'text-[var(--color-text)] placeholder:text-[var(--color-muted)]',
+          'focus:outline-none focus:border-[var(--color-green)]',
+          'border-[var(--color-border)] resize-y',
+          disabled && 'opacity-60',
+        )}
+      />
+    </div>
+  );
+}
+
+// =====================================================================
+// ADD-ONS SECTION
+// =====================================================================
+
+function AddonsSection({
+  quote,
+  addons,
+  linesByAddon,
+  pricing,
+  disabled,
+  onAfterMutation,
+}: {
+  quote: Quote;
+  addons: QuoteAddon[];
+  linesByAddon: Map<string, QuoteLineItem[]>;
+  pricing: PricingSettings | null;
+  disabled: boolean;
+  onAfterMutation: () => void;
+}) {
+  const createAddon = useCreateAddon();
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Add-on Packages</CardTitle>
+          <span className="text-xs text-[var(--color-muted)] uppercase tracking-wider">
+            {addons.length} package{addons.length === 1 ? '' : 's'}
+          </span>
+        </div>
+      </CardHeader>
+
+      <div className="flex flex-col gap-4">
+        {addons.length === 0 && (
+          <p className="text-sm text-[var(--color-muted)]">
+            None yet. {disabled ? '' : 'Add packages like UV Light, Humidifier, or Zoning that the customer can opt into.'}
+          </p>
+        )}
+
+        {addons.map((addon) => (
+          <AddonCard
+            key={addon.id}
+            quote={quote}
+            addon={addon}
+            lines={linesByAddon.get(addon.id) ?? []}
+            pricing={pricing}
+            disabled={disabled}
+            onAfterMutation={onAfterMutation}
+          />
+        ))}
+
+        {!disabled && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={async () => {
+              await createAddon.mutateAsync({
+                quoteId: quote.id,
+                name: 'New add-on package',
+                position: addons.length,
+              });
+            }}
+            disabled={createAddon.isPending}
+          >
+            {createAddon.isPending ? 'Adding…' : '+ Add package'}
+          </Button>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function AddonCard({
+  quote,
+  addon,
+  lines,
+  pricing,
+  disabled,
+  onAfterMutation,
+}: {
+  quote: Quote;
+  addon: QuoteAddon;
+  lines: QuoteLineItem[];
+  pricing: PricingSettings | null;
+  disabled: boolean;
+  onAfterMutation: () => void;
+}) {
+  const [name, setName] = useState(addon.name);
+  const [desc, setDesc] = useState(addon.description ?? '');
+  const [adding, setAdding] = useState(false);
+
+  const updateAddon = useUpdateAddon();
+  const deleteAddon = useDeleteAddon();
+
+  const headerDirty = name !== addon.name || (addon.description ?? '') !== desc;
+
+  async function handleSaveHeader() {
+    if (!headerDirty) return;
+    await updateAddon.mutateAsync({
+      addonId: addon.id,
+      quoteId: quote.id,
+      patch: { name, description: desc || null },
+    });
+  }
+
+  async function handleToggleSelected() {
+    await updateAddon.mutateAsync({
+      addonId: addon.id,
+      quoteId: quote.id,
+      patch: { selected: !addon.selected },
+    });
+    onAfterMutation();
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Delete the "${addon.name}" add-on package and its ${lines.length} line(s)?`)) return;
+    await deleteAddon.mutateAsync({ addonId: addon.id, quoteId: quote.id });
+    onAfterMutation();
+  }
+
+  return (
+    <div
+      className={cn(
+        'rounded-[var(--radius-md)] border p-3 flex flex-col gap-3',
+        addon.selected
+          ? 'border-[var(--color-green)] bg-[var(--color-carbon)]'
+          : 'border-[var(--color-border)] bg-[var(--color-carbon)]',
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0 flex flex-col gap-2">
+          <Input
+            label="Package name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={disabled}
+          />
+          <FieldTextarea
+            label="Description"
+            value={desc}
+            onChange={setDesc}
+            placeholder="What does this package include?"
+            rows={2}
+            disabled={disabled}
+          />
+        </div>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleToggleSelected}
+            disabled={disabled || updateAddon.isPending}
+            className={cn(
+              'h-8 px-3 rounded-[var(--radius-sm)] text-xs uppercase tracking-wider font-semibold transition-all',
+              addon.selected
+                ? 'bg-[var(--color-green)] text-[var(--color-carbon)]'
+                : 'bg-[var(--color-border)] text-[var(--color-muted)]',
+              disabled && 'opacity-50 cursor-not-allowed',
+            )}
+          >
+            {addon.selected ? 'Selected' : 'Not selected'}
+          </button>
+          <div className="text-base tabular-nums [font-family:var(--font-mono)] text-[var(--color-text)]">
+            {money(addon.total_cents)}
+          </div>
+        </div>
+      </div>
+
+      {!disabled && headerDirty && (
+        <div className="flex justify-end">
+          <Button variant="secondary" size="sm" onClick={handleSaveHeader} disabled={updateAddon.isPending}>
+            {updateAddon.isPending ? 'Saving…' : 'Save header'}
+          </Button>
+        </div>
+      )}
+
+      {/* Lines belonging to this addon */}
+      <div className="flex flex-col gap-2 pt-2 border-t border-[var(--color-border)]">
+        <span className="text-xs uppercase tracking-wider text-[var(--color-muted)]">
+          Lines ({lines.length})
+        </span>
+        {pricing &&
+          lines.map((line) => (
+            <LineEditor
+              key={line.id}
+              line={line}
+              quoteId={quote.id}
+              pricing={pricing}
+              disabled={disabled}
+              onAfterMutation={onAfterMutation}
+              addonId={addon.id}
+            />
+          ))}
+        {adding && pricing && (
+          <LineEditor
+            key="new"
+            line={null}
+            quoteId={quote.id}
+            pricing={pricing}
+            disabled={false}
+            onAfterMutation={() => {
+              setAdding(false);
+              onAfterMutation();
+            }}
+            onCancel={() => setAdding(false)}
+            addonId={addon.id}
+          />
+        )}
+        {!disabled && !adding && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setAdding(true)}
+            disabled={!pricing}
+          >
+            + Add line to package
+          </Button>
+        )}
+      </div>
+
+      {!disabled && (
+        <div className="flex justify-end pt-2 border-t border-[var(--color-border)]">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleDelete}
+            disabled={deleteAddon.isPending}
+          >
+            {deleteAddon.isPending ? 'Deleting…' : 'Delete package'}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+// DISCOUNTS SECTION
+// =====================================================================
+
+function DiscountsSection({
+  quote,
+  discounts,
+  disabled,
+  onAfterMutation,
+}: {
+  quote: Quote;
+  discounts: QuoteDiscount[];
+  disabled: boolean;
+  onAfterMutation: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [label, setLabel] = useState('');
+  const [amount, setAmount] = useState(0);
+
+  const createDiscount = useCreateDiscount();
+  const deleteDiscount = useDeleteDiscount();
+
+  async function handleAdd() {
+    if (!label.trim() || amount <= 0) return;
+    await createDiscount.mutateAsync({
+      quoteId: quote.id,
+      label: label.trim(),
+      amount_cents: amount,
+      position: discounts.length,
+    });
+    setLabel('');
+    setAmount(0);
+    setAdding(false);
+    onAfterMutation();
+  }
+
+  async function handleDelete(d: QuoteDiscount) {
+    if (!confirm(`Remove discount "${d.label}"?`)) return;
+    await deleteDiscount.mutateAsync({ discountId: d.id, quoteId: quote.id });
+    onAfterMutation();
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>Discounts</CardTitle>
+          <span className="text-xs text-[var(--color-muted)] uppercase tracking-wider">
+            {discounts.length} applied
+          </span>
+        </div>
+      </CardHeader>
+
+      <div className="flex flex-col gap-2">
+        {discounts.length === 0 && !adding && (
+          <p className="text-sm text-[var(--color-muted)]">
+            None applied. {disabled ? '' : 'Add a discount to subtract from the grand total (e.g., Condenser Match Discount, Mass Save rebate).'}
+          </p>
+        )}
+
+        {discounts.map((d) => (
+          <div
+            key={d.id}
+            className="flex items-center justify-between rounded-[var(--radius-md)] border border-[var(--color-border)] p-2 bg-[var(--color-carbon)]"
+          >
+            <div className="flex flex-col">
+              <span className="text-sm">{d.label}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-sm tabular-nums [font-family:var(--font-mono)] text-[var(--color-danger)]">
+                −{money(d.amount_cents)}
+              </span>
+              {!disabled && (
+                <Button variant="ghost" size="sm" onClick={() => handleDelete(d)}>
+                  Remove
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {adding && !disabled && (
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-green)] p-3 bg-[var(--color-carbon)] flex flex-col gap-3">
+            <Input
+              label="Label"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. Condenser Match Discount"
+            />
+            <MoneyInput label="Amount" value={amount} onChange={setAmount} />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => { setAdding(false); setLabel(''); setAmount(0); }}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleAdd}
+                disabled={!label.trim() || amount <= 0 || createDiscount.isPending}
+              >
+                {createDiscount.isPending ? 'Adding…' : 'Add discount'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {!disabled && !adding && (
+          <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
+            + Add discount
+          </Button>
+        )}
+      </div>
+    </Card>
   );
 }
 

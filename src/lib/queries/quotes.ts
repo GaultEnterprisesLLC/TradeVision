@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { priceLine, priceQuote } from '@/lib/pricing';
+import { computeGrandTotal, priceLine, priceQuote } from '@/lib/pricing';
 import type {
   CostBasis,
+  GrandTotalResult,
   PricedLine,
   PricingResult,
   PricingSettings,
@@ -11,11 +12,17 @@ import type {
   CompanySettings,
   PricingSnapshot,
   Quote,
+  QuoteAddon,
+  QuoteAddonInsert,
+  QuoteAddonUpdate,
+  QuoteDiscount,
+  QuoteDiscountInsert,
   QuoteInsert,
   QuoteLineItem,
   QuoteLineItemInsert,
   QuoteLineItemUpdate,
   QuoteUpdate,
+  SelectedVariant,
 } from '@/types/database';
 
 /**
@@ -39,6 +46,8 @@ import type {
 const QUOTES_KEY = ['quotes'] as const;
 const QUOTE_KEY = (id: string) => ['quote', id] as const;
 const QUOTE_LINES_KEY = (id: string) => ['quote-lines', id] as const;
+const QUOTE_ADDONS_KEY = (id: string) => ['quote-addons', id] as const;
+const QUOTE_DISCOUNTS_KEY = (id: string) => ['quote-discounts', id] as const;
 
 // ---------------------------------------------------------------------
 // Snapshot ↔ PricingSettings adapters
@@ -381,8 +390,8 @@ export function useDeleteLine() {
 // ---------------------------------------------------------------------
 
 /**
- * Given lines + pricing, compute a full PricingResult.
- * Used both for the live editor display and for total recalculation.
+ * Given lines + pricing, compute a full PricingResult — including per-Option
+ * variant totals AND per-Addon-Package totals.
  */
 export function computeQuoteResult(
   lines: QuoteLineItem[],
@@ -395,24 +404,204 @@ export function computeQuoteResult(
       quantity: Number(l.quantity),
       unit_cost_cents: l.unit_cost_cents,
       variant: l.variant,
+      addon_id: l.addon_id,
     })),
     pricing,
   );
 }
 
 /**
- * Pick the displayed total for a quote.
- *  - If a variant has been selected, use that variant's price.
- *  - Otherwise, default to 'better' (the middle option) so the list view
- *    has something sensible to show.
+ * Compute the grand-total a quote should display: selected Option + every
+ * Selected Add-on Package - sum of all discounts.
+ *
+ * `selected_variant` defaults to 'better' (middle option) when the customer
+ * hasn't picked yet — so the list view has something sensible to show.
  */
-export function pickHeadlineTotal(
+export function computeHeadlineGrandTotal(
   result: PricingResult,
-  selected: Quote['selected_variant'],
-): { cost_cents: number; price_cents: number } {
-  const v = selected ?? 'better';
-  const t = result.variants[v];
-  return { cost_cents: t.cost_total_cents, price_cents: t.price_total_cents };
+  selected_variant: Quote['selected_variant'],
+  addons: QuoteAddon[],
+  discounts: QuoteDiscount[],
+): GrandTotalResult {
+  const variant: SelectedVariant = selected_variant ?? 'better';
+  const selected_addon_ids = addons.filter((a) => a.selected).map((a) => a.id);
+  const discount_amount_cents = discounts.reduce(
+    (s, d) => s + d.amount_cents,
+    0,
+  );
+  return computeGrandTotal({
+    result,
+    selected_variant: variant,
+    selected_addon_ids,
+    discount_amount_cents,
+  });
+}
+
+// ---------------------------------------------------------------------
+// ADD-ON PACKAGES — list + CRUD
+// ---------------------------------------------------------------------
+
+async function fetchQuoteAddons(quoteId: string): Promise<QuoteAddon[]> {
+  const { data, error } = await supabase
+    .from('quote_addons')
+    .select('*')
+    .eq('quote_id', quoteId)
+    .order('position', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as QuoteAddon[];
+}
+
+export function useQuoteAddons(quoteId: string | undefined) {
+  return useQuery({
+    queryKey: quoteId ? QUOTE_ADDONS_KEY(quoteId) : ['quote-addons', 'none'],
+    queryFn: () => fetchQuoteAddons(quoteId!),
+    enabled: !!quoteId,
+  });
+}
+
+interface CreateAddonArgs {
+  quoteId: string;
+  name: string;
+  description?: string | null;
+  position?: number;
+}
+
+export function useCreateAddon() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: CreateAddonArgs): Promise<QuoteAddon> => {
+      const insert: QuoteAddonInsert = {
+        quote_id: args.quoteId,
+        name: args.name,
+        description: args.description ?? null,
+        position: args.position ?? 0,
+        selected: false,
+      };
+      const { data, error } = await supabase
+        .from('quote_addons')
+        .insert(insert as Record<string, unknown>)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as QuoteAddon;
+    },
+    onSuccess: (addon) => {
+      qc.invalidateQueries({ queryKey: QUOTE_ADDONS_KEY(addon.quote_id) });
+    },
+  });
+}
+
+interface UpdateAddonArgs {
+  addonId: string;
+  quoteId: string;
+  patch: QuoteAddonUpdate;
+}
+
+export function useUpdateAddon() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ addonId, patch }: UpdateAddonArgs): Promise<QuoteAddon> => {
+      const { data, error } = await supabase
+        .from('quote_addons')
+        .update(patch as Record<string, unknown>)
+        .eq('id', addonId)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as QuoteAddon;
+    },
+    onSuccess: (addon) => {
+      qc.invalidateQueries({ queryKey: QUOTE_ADDONS_KEY(addon.quote_id) });
+    },
+  });
+}
+
+export function useDeleteAddon() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { addonId: string; quoteId: string }) => {
+      const { error } = await supabase
+        .from('quote_addons')
+        .delete()
+        .eq('id', args.addonId);
+      if (error) throw error;
+    },
+    onSuccess: (_v, args) => {
+      qc.invalidateQueries({ queryKey: QUOTE_ADDONS_KEY(args.quoteId) });
+      qc.invalidateQueries({ queryKey: QUOTE_LINES_KEY(args.quoteId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------
+// DISCOUNTS — list + CRUD
+// ---------------------------------------------------------------------
+
+async function fetchQuoteDiscounts(quoteId: string): Promise<QuoteDiscount[]> {
+  const { data, error } = await supabase
+    .from('quote_discounts')
+    .select('*')
+    .eq('quote_id', quoteId)
+    .order('position', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as QuoteDiscount[];
+}
+
+export function useQuoteDiscounts(quoteId: string | undefined) {
+  return useQuery({
+    queryKey: quoteId ? QUOTE_DISCOUNTS_KEY(quoteId) : ['quote-discounts', 'none'],
+    queryFn: () => fetchQuoteDiscounts(quoteId!),
+    enabled: !!quoteId,
+  });
+}
+
+interface CreateDiscountArgs {
+  quoteId: string;
+  label: string;
+  amount_cents: number;
+  position?: number;
+}
+
+export function useCreateDiscount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: CreateDiscountArgs): Promise<QuoteDiscount> => {
+      const insert: QuoteDiscountInsert = {
+        quote_id: args.quoteId,
+        label: args.label,
+        amount_cents: args.amount_cents,
+        position: args.position ?? 0,
+      };
+      const { data, error } = await supabase
+        .from('quote_discounts')
+        .insert(insert as Record<string, unknown>)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data as QuoteDiscount;
+    },
+    onSuccess: (discount) => {
+      qc.invalidateQueries({ queryKey: QUOTE_DISCOUNTS_KEY(discount.quote_id) });
+    },
+  });
+}
+
+export function useDeleteDiscount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (args: { discountId: string; quoteId: string }) => {
+      const { error } = await supabase
+        .from('quote_discounts')
+        .delete()
+        .eq('id', args.discountId);
+      if (error) throw error;
+    },
+    onSuccess: (_v, args) => {
+      qc.invalidateQueries({ queryKey: QUOTE_DISCOUNTS_KEY(args.quoteId) });
+    },
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -425,19 +614,44 @@ interface RecalcArgs {
   selected_variant: Quote['selected_variant'];
 }
 
+/**
+ * Re-fetches lines, addons, and discounts; recomputes per-Option +
+ * per-Addon totals; updates each addon's cached `total_cents` if it
+ * drifted; then writes the headline grand total back to the quote.
+ *
+ * `subtotal_cents` on the quote = grand cost (no markup, no discount).
+ * `total_cents` on the quote    = grand total (option + selected addons − discounts).
+ */
 async function recalcQuoteTotals({
   quoteId,
   pricing,
   selected_variant,
 }: RecalcArgs): Promise<Quote> {
-  const lines = await fetchQuoteLines(quoteId);
+  const [lines, addons, discounts] = await Promise.all([
+    fetchQuoteLines(quoteId),
+    fetchQuoteAddons(quoteId),
+    fetchQuoteDiscounts(quoteId),
+  ]);
   const result = computeQuoteResult(lines, pricing);
-  const { cost_cents, price_cents } = pickHeadlineTotal(result, selected_variant);
+
+  // Update each addon's cached total_cents if it drifted.
+  for (const addon of addons) {
+    const computed = result.addons[addon.id]?.price_total_cents ?? 0;
+    if (addon.total_cents !== computed) {
+      const { error } = await supabase
+        .from('quote_addons')
+        .update({ total_cents: computed } as Record<string, unknown>)
+        .eq('id', addon.id);
+      if (error) throw error;
+    }
+  }
+
+  const grand = computeHeadlineGrandTotal(result, selected_variant, addons, discounts);
   const { data, error } = await supabase
     .from('quotes')
     .update({
-      subtotal_cents: cost_cents,
-      total_cents: price_cents,
+      subtotal_cents: grand.grand_cost_cents,
+      total_cents: grand.grand_total_cents,
     } as Record<string, unknown>)
     .eq('id', quoteId)
     .select('*')
@@ -452,6 +666,7 @@ export function useRecalcQuoteTotals() {
     mutationFn: recalcQuoteTotals,
     onSuccess: (quote) => {
       qc.setQueryData(QUOTE_KEY(quote.id), quote);
+      qc.invalidateQueries({ queryKey: QUOTE_ADDONS_KEY(quote.id) });
       qc.invalidateQueries({ queryKey: [...QUOTES_KEY, quote.company_id] });
     },
   });
@@ -479,9 +694,13 @@ async function markReady({ quote, liveSettings }: MarkReadyArgs): Promise<Quote>
   const pricing = settingsToPricing(liveSettings);
   const snapshot = takeSnapshot(liveSettings);
 
-  // 1. Re-price all lines so each row's stored unit_price_cents is
-  //    coherent with the snapshot we're about to freeze.
-  const lines = await fetchQuoteLines(quote.id);
+  // 1. Re-price every line — including addon lines — so each row's stored
+  //    unit_price_cents is coherent with the snapshot we're about to freeze.
+  const [lines, addons, discounts] = await Promise.all([
+    fetchQuoteLines(quote.id),
+    fetchQuoteAddons(quote.id),
+    fetchQuoteDiscounts(quote.id),
+  ]);
   const repriced: PricedLine[] = lines.map((l) =>
     priceLine(
       {
@@ -490,13 +709,14 @@ async function markReady({ quote, liveSettings }: MarkReadyArgs): Promise<Quote>
         quantity: Number(l.quantity),
         unit_cost_cents: l.unit_cost_cents,
         variant: l.variant,
+        addon_id: l.addon_id,
       },
       pricing,
     ),
   );
 
-  // Update each line whose unit_price_cents drifted. Sequential rather
-  // than Promise.all so ordering / RLS errors surface predictably.
+  // Update each line whose unit_price_cents drifted. Sequential so
+  // RLS / ordering errors surface predictably.
   for (let i = 0; i < lines.length; i++) {
     const before = lines[i];
     const after = repriced[i];
@@ -511,18 +731,31 @@ async function markReady({ quote, liveSettings }: MarkReadyArgs): Promise<Quote>
     }
   }
 
-  // 2. Compute totals against the just-frozen snapshot.
+  // 2. Recompute under the just-frozen snapshot and refresh addon caches.
   const result = computeQuoteResult(lines, pricing);
-  const { cost_cents, price_cents } = pickHeadlineTotal(
+  for (const addon of addons) {
+    const computed = result.addons[addon.id]?.price_total_cents ?? 0;
+    if (addon.total_cents !== computed) {
+      const { error } = await supabase
+        .from('quote_addons')
+        .update({ total_cents: computed } as Record<string, unknown>)
+        .eq('id', addon.id);
+      if (error) throw error;
+    }
+  }
+
+  const grand = computeHeadlineGrandTotal(
     result,
     quote.selected_variant,
+    addons,
+    discounts,
   );
 
   // 3. Write snapshot + totals + status flip in one update.
   const patch: QuoteUpdate = {
     pricing_snapshot: snapshot,
-    subtotal_cents: cost_cents,
-    total_cents: price_cents,
+    subtotal_cents: grand.grand_cost_cents,
+    total_cents: grand.grand_total_cents,
     status: 'ready',
   };
   const { data, error } = await supabase
@@ -542,6 +775,8 @@ export function useMarkReady() {
     onSuccess: (quote) => {
       qc.setQueryData(QUOTE_KEY(quote.id), quote);
       qc.invalidateQueries({ queryKey: QUOTE_LINES_KEY(quote.id) });
+      qc.invalidateQueries({ queryKey: QUOTE_ADDONS_KEY(quote.id) });
+      qc.invalidateQueries({ queryKey: QUOTE_DISCOUNTS_KEY(quote.id) });
       qc.invalidateQueries({ queryKey: [...QUOTES_KEY, quote.company_id] });
     },
   });

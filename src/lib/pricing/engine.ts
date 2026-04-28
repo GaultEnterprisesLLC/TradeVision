@@ -19,7 +19,10 @@
  */
 
 import type {
+  AddonTotal,
   CostBasis,
+  GrandTotalArgs,
+  GrandTotalResult,
   PricedLine,
   PricingMode,
   PricingResult,
@@ -225,12 +228,21 @@ export function priceLine(line: QuoteLine, settings: PricingSettings): PricedLin
 // QUOTE-LEVEL TOTALS (GBB)
 // ---------------------------------------------------------------------
 
-/** Sum the lines that contribute to a particular GBB variant. */
+/**
+ * Sum the lines that contribute to a particular Option.
+ *
+ * Addon lines are EXCLUDED — they're scoped to their Add-on Package and
+ * roll up via sumAddons() instead. This is what lets a quote like
+ * 3879-Lovett ($39,468 total) show "HVAC Replacement" at $36,393 plus
+ * "UV Light Install" at $1,362 plus "Humidifier" at $3,713 separately,
+ * rather than baking everything into the option total.
+ */
 function sumVariant(lines: PricedLine[], v: 'good' | 'better' | 'best'): VariantTotal {
   let cost = 0;
   let price = 0;
 
   for (const l of lines) {
+    if (l.addon_id != null) continue; // addon lines roll up separately
     if (l.variant === v || l.variant === 'all') {
       cost += l.line_total_cost_cents;
       price += l.line_total_price_cents;
@@ -246,6 +258,33 @@ function sumVariant(lines: PricedLine[], v: 'good' | 'better' | 'best'): Variant
     margin_cents,
     margin_fraction,
   };
+}
+
+/**
+ * Group lines by addon_id and sum each bucket. Returns {} if no addon
+ * lines exist. Caller is responsible for knowing which addons are
+ * "Selected" — the engine reports totals for every addon present.
+ */
+function sumAddons(lines: PricedLine[]): Record<string, AddonTotal> {
+  const buckets = new Map<string, { cost: number; price: number }>();
+  for (const l of lines) {
+    if (l.addon_id == null) continue;
+    const cur = buckets.get(l.addon_id) ?? { cost: 0, price: 0 };
+    cur.cost += l.line_total_cost_cents;
+    cur.price += l.line_total_price_cents;
+    buckets.set(l.addon_id, cur);
+  }
+  const out: Record<string, AddonTotal> = {};
+  for (const [id, { cost, price }] of buckets) {
+    const margin_cents = price - cost;
+    out[id] = {
+      cost_total_cents: cost,
+      price_total_cents: price,
+      margin_cents,
+      margin_fraction: price > 0 ? margin_cents / price : 0,
+    };
+  }
+  return out;
 }
 
 /**
@@ -267,6 +306,55 @@ export function priceQuote(
       better: sumVariant(priced, 'better'),
       best: sumVariant(priced, 'best'),
     },
+    addons: sumAddons(priced),
+  };
+}
+
+// ---------------------------------------------------------------------
+// GRAND TOTAL (selected option + selected addons − discounts)
+// ---------------------------------------------------------------------
+
+/**
+ * The customer-facing grand total. Combines:
+ *   - the customer's selected Option (one of good/better/best)
+ *   - every Add-on Package the customer ticked Selected
+ *   - minus the sum of all applied discounts
+ *
+ * Pure function — selection state and discount totals come in as args,
+ * not derived from the lines themselves. The engine doesn't know which
+ * addons are selected; that's UI/persistence state.
+ */
+export function computeGrandTotal(args: GrandTotalArgs): GrandTotalResult {
+  const variant = args.result.variants[args.selected_variant];
+  const options_price_cents = variant.price_total_cents;
+  const options_cost_cents = variant.cost_total_cents;
+
+  let addons_price_cents = 0;
+  let addons_cost_cents = 0;
+  for (const id of args.selected_addon_ids) {
+    const a = args.result.addons[id];
+    if (!a) continue; // selected id no longer exists — defensive
+    addons_price_cents += a.price_total_cents;
+    addons_cost_cents += a.cost_total_cents;
+  }
+
+  const discount_cents = Math.max(0, args.discount_amount_cents);
+  const grand_total_cents =
+    options_price_cents + addons_price_cents - discount_cents;
+  const grand_cost_cents = options_cost_cents + addons_cost_cents;
+  const margin_cents = grand_total_cents - grand_cost_cents;
+  const margin_fraction = grand_total_cents > 0 ? margin_cents / grand_total_cents : 0;
+
+  return {
+    options_price_cents,
+    addons_price_cents,
+    discount_cents,
+    grand_total_cents,
+    options_cost_cents,
+    addons_cost_cents,
+    grand_cost_cents,
+    margin_cents,
+    margin_fraction,
   };
 }
 

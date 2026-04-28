@@ -5,4 +5,5 @@ export {
   priceLine,
   priceQuote,
   previewMaterialPrice,
+  computeGrandTotal,
 } from './engine';
