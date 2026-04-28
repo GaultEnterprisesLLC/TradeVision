@@ -303,26 +303,21 @@ async function main() {
       }
     }
 
+    // We store the full "NN Category | Item Name" string as `description`
+    // so customer-facing PDFs match FP's labels exactly. The slug-form
+    // `category` covers filtering. The long FP "Description" column lands
+    // in `details` for the multi-line spec body.
     items.push({
       tenant_id: tenant.id,
       webb_part_number: webbPart,
       fp_item_id: null, // not in this export
-      description: itemName, // prefix stripped
+      description: fullName,
+      details: longDesc || null,
       category: categorySlug(categoryRaw),
       uom: 'each',
       unit_cost_cents: unitCostCents,
       line_type: lineType,
-      // Stash the long description into the catalog description if the
-      // item name itself is short. Helpful for search later.
-      // (We're keeping description as the primary field; not adding a
-      // second column right now.)
     });
-
-    // If the long FP description has more detail than the item name,
-    // fold it onto the description for searchability.
-    if (longDesc && longDesc.length > itemName.length + 5) {
-      items[items.length - 1].description = `${itemName} — ${longDesc.replace(/\s+/g, ' ')}`;
-    }
   }
 
   log(`Will insert ${items.length} items.`);
