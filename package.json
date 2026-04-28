@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "import:fp-items": "node scripts/import_fp_items.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",
