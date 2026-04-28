@@ -39,6 +39,8 @@ export type QuoteStatus =
   | 'declined';
 
 export type Variant = 'good' | 'better' | 'best' | 'all';
+/** The customer-selectable variants — `selected_variant` on the quotes row excludes 'all'. */
+export type SelectedVariant = Exclude<Variant, 'all'>;
 export type LineType = 'material' | 'labor' | 'overhead' | 'permit' | 'sub' | 'addon';
 
 // =====================================================================
@@ -113,6 +115,93 @@ export type CompanySettingsUpdate = Partial<
 >;
 
 // =====================================================================
+// QUOTES
+// =====================================================================
+
+/**
+ * Snapshot of the pricing inputs frozen onto a quote when it transitions
+ * out of `in_progress` (today, on "Mark ready"; later, on push to
+ * FieldPulse). Once frozen, the engine prices the quote against this
+ * snapshot instead of the current company_settings, so customer-facing
+ * numbers don't drift if Settings change later.
+ *
+ * Shape mirrors the engine's PricingSettings exactly (intentional —
+ * makes it droppable straight into priceQuote()).
+ */
+export interface PricingSnapshot {
+  pricing_mode: PricingMode;
+  default_markup: number;
+  default_margin: number;
+  markup_tiers: DBPricingTier[];
+  margin_tiers: DBPricingTier[];
+  state_tax_rate: number;
+  cost_basis: WebbCostBasis;
+  /** ISO timestamp this snapshot was taken. */
+  snapshotted_at: string;
+}
+
+export interface Quote {
+  id: string;
+  tenant_id: string;
+  company_id: string;
+  fp_job_id: string | null;
+  fp_quote_id: string | null;
+  customer_name: string | null;
+  customer_address: string | null;
+  module: Module;
+  status: QuoteStatus;
+  video_path: string | null;
+  video_uploaded_at: string | null;
+  pricing_snapshot: PricingSnapshot | null;
+  subtotal_cents: number;
+  total_cents: number;
+  selected_variant: SelectedVariant | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Fields the app sets on insert. id/timestamps default in the DB. */
+export type QuoteInsert = Omit<
+  Quote,
+  'id' | 'created_at' | 'updated_at' | 'subtotal_cents' | 'total_cents'
+> & {
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+  subtotal_cents?: number;
+  total_cents?: number;
+};
+
+/** Patch shape — anything except identity fields. */
+export type QuoteUpdate = Partial<
+  Omit<Quote, 'id' | 'tenant_id' | 'company_id' | 'created_at' | 'updated_at' | 'created_by'>
+>;
+
+export interface QuoteLineItem {
+  id: string;
+  quote_id: string;
+  variant: Variant;
+  item_id: string | null;
+  description: string;
+  quantity: number;
+  unit_cost_cents: number;
+  unit_price_cents: number;
+  line_type: LineType;
+  position: number;
+  created_at: string;
+}
+
+export type QuoteLineItemInsert = Omit<QuoteLineItem, 'id' | 'created_at'> & {
+  id?: string;
+  created_at?: string;
+};
+
+export type QuoteLineItemUpdate = Partial<
+  Omit<QuoteLineItem, 'id' | 'quote_id' | 'created_at'>
+>;
+
+// =====================================================================
 // SUPABASE GENERIC DATABASE TYPE
 // =====================================================================
 // This type plugs into createClient<Database>() so query results are
@@ -148,6 +237,16 @@ export interface Database {
         Row: CompanySettings;
         Insert: Partial<CompanySettings> & { company_id: string };
         Update: CompanySettingsUpdate;
+      };
+      quotes: {
+        Row: Quote;
+        Insert: QuoteInsert;
+        Update: QuoteUpdate;
+      };
+      quote_line_items: {
+        Row: QuoteLineItem;
+        Insert: QuoteLineItemInsert;
+        Update: QuoteLineItemUpdate;
       };
     };
     Views: Record<string, never>;

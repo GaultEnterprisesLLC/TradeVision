@@ -5,6 +5,7 @@ import { RequireAuth } from '@/components/RequireAuth';
 import SignIn from '@/routes/SignIn';
 import AuthCallback from '@/routes/AuthCallback';
 import Quotes from '@/routes/Quotes';
+import QuoteEditor from '@/routes/QuoteEditor';
 import New from '@/routes/New';
 import Settings from '@/routes/Settings';
 import More from '@/routes/More';
@@ -33,6 +34,7 @@ export default function App() {
           >
             <Route index element={<Navigate to="/quotes" replace />} />
             <Route path="/quotes" element={<Quotes />} />
+            <Route path="/quotes/:id/edit" element={<QuoteEditor />} />
             <Route path="/new" element={<New />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/more" element={<More />} />
