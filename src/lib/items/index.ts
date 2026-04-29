@@ -170,15 +170,22 @@ function tokenize(s: string): string[] {
   const lower = s.toLowerCase();
   const tokens: string[] = [];
 
-  // Capture compound size tokens (e.g. "3/8", "1/4", "20/40"). These
-  // must come out BEFORE the alphanumeric split nukes the slash.
-  for (const m of lower.matchAll(/\d+\/\d+/g)) {
+  // Numeric tokens — captured WHOLE regardless of length:
+  //  - Fractions ("3/8", "1/4")
+  //  - Standalone integers ("3" from "3-ton", "60000" from "60K BTU",
+  //    "150" from "150K", "12" from "12kW")
+  // Single digits matter as size signal ("3-ton" vs "5-ton" only differ
+  // in the digit). The IDF weighting handles their relative rarity:
+  // "3" appears in many items so its weight is moderate, but its
+  // presence/absence still distinguishes 3-ton from 5-ton.
+  for (const m of lower.matchAll(/\d+(?:\/\d+)?/g)) {
     tokens.push(m[0]);
   }
 
-  // Standard tokenization on the rest.
-  const cleaned = lower.replace(/[^a-z0-9]+/g, ' ');
-  for (const t of cleaned.split(/\s+/)) {
+  // Alphabetic word tokens (length >= 2). Digits already captured above
+  // so we strip them here to avoid double-counting.
+  const alphaOnly = lower.replace(/[^a-z]+/g, ' ');
+  for (const t of alphaOnly.split(/\s+/)) {
     if (t.length >= 2) tokens.push(t);
   }
 

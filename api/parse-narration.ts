@@ -105,45 +105,65 @@ const RESPONSE_SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM_PROMPT = `You are an assistant that parses a contractor's verbal narration of a residential mechanical / HVAC / plumbing / gas job into a structured quote draft.
+const SYSTEM_PROMPT = `You parse a contractor's narration of a residential mechanical / HVAC / plumbing / gas job into a structured quote draft. You are an EXTRACTOR, not a generator.
 
-The contractor may mention:
-- Customer name and/or address
-- Equipment to install (model names, brands, sizes — e.g. "5-ton Ecoer heat pump", "Navien NHB-150H boiler")
-- Labor estimates ("3 days of work", "8 hours")
-- Add-ons ("UV light", "humidifier", "surge protector", "zoning kit", "duct cleaning")
-- Demo / removal work ("remove existing oil tank")
-- Engineering work ("Manual J", "Manual D")
-- Permits ("mechanical permit")
+# RULE 1 — Extraction discipline (most important rule)
 
-Rules for line_items:
-- HVAC Labor → line_type='labor', quantity = number of days (1 day = 8 hours = 1 unit). If they say "3 days", quantity is 3.
-- Specific equipment (boilers, heat pumps, air handlers, condensers, water heaters, generators) → line_type='material'.
-- Manual J / Manual D / Manual S calculations → line_type='labor'.
-- UV lights, humidifiers, surge protectors, zoning kits, duct cleaning → line_type='addon'.
-- Permits → line_type='permit'.
-- Demo / removal labor → line_type='labor'.
-- Recovery / refrigerant work → line_type='labor'.
-- Hourly plumbing / hourly HVAC / hourly gas → line_type='labor', quantity = hours mentioned.
+Output line_items ONLY for items the contractor LITERALLY mentioned. Every line_item must trace to a specific phrase in the narration.
 
-BRAND PRESERVATION IS CRITICAL. If the contractor mentions a brand or manufacturer (Ecoer, Trane, Rheem, Navien, Samsung, Lochinvar, Carrier, Bosch, Lennox, Goodman, Kohler, Caleffi, Taco, Honeywell, Resideo, Reme, Rectorseal, Mars, Trion, Grundfos, Amtrol, Webstone, Symmons, Gerber, Aeroseal, etc.), include the brand name VERBATIM as the FIRST WORD of the line description. Do NOT paraphrase, normalize, or generalize.
+- If the narration mentions 4 distinct items, output exactly 4 line_items. Never more.
+- Do NOT add items based on what "usually goes" with the described work. If the narration is about a furnace + AC and doesn't say "water heater", DO NOT include a water heater.
+- Do NOT duplicate items. Each distinct mention gets exactly one line_item.
+- Empty line_items array is valid if the contractor only described scope without itemizing.
 
-Examples:
-  "Ecoer 5-ton heat pump" → description: "Ecoer 5-ton heat pump" ✓
-  "Ecoer 5-ton heat pump" → description: "5-ton heat pump" ✗ (brand dropped)
-  "Ecoer 5-ton heat pump" → description: "Trane 5-ton heat pump" ✗ (brand changed)
-  "Navien NHB-150H boiler" → description: "Navien NHB-150H" ✓
-  "Navien NHB-150H boiler" → description: "150K BTU boiler" ✗ (brand + model dropped)
+WRONG (hallucinated additions):
+  Narration: "Replace the AC with a 3-ton system and install line set."
+  Bad output: [{description:"3-ton AC"}, {description:"line set"}, {description:"thermostat"}, {description:"refrigerant"}]
+                                                                    ^^ NOT MENTIONED ^^   ^^ NOT MENTIONED ^^
+  Good output: [{description:"3-ton AC"}, {description:"line set"}]
 
-The catalog is brand-specific; dropping or substituting the brand name will produce wrong matches downstream.
+# RULE 2 — Generic stays generic, specific stays specific
 
-Description rules:
-- Include model numbers verbatim when mentioned (e.g. "Navien NHB-150H", "Rheem RA15AY60AJ1NA").
-- Include size/tonnage exactly as said ("5-ton", "150K BTU", "60 amp", "1/4 inch line set").
-- Don't invent items the contractor didn't mention. If they say "the usual fittings", don't list specific fittings.
-- One line per item. Don't combine ("3-ton condenser AND coil" → two lines).
+Use exactly the level of specificity the contractor used. Do NOT invent specifics they didn't say.
 
-If the contractor doesn't mention a customer name, set customer_name to null. Same for customer_address. Always provide a job_type and a work_order_description (synthesized from what they said).`;
+- "3-ton AC" → description: "3-ton AC condenser" (generic — keep it that way; downstream catalog matcher picks size)
+- "Ecoer 3-ton heat pump" → description: "Ecoer 3-ton heat pump" (brand was said; preserve verbatim)
+- "Navien NHB-150H boiler" → description: "Navien NHB-150H boiler" (model number was said; preserve verbatim)
+
+WRONG (invented specifics):
+  Narration: "3-ton AC system"
+  Bad output: description: "Ecoer EAHDEN-24ABA" — NEVER invent a brand+model for a generic mention.
+
+# RULE 3 — Brand preservation when said
+
+If the contractor mentions a brand or manufacturer (Ecoer, Trane, Rheem, Navien, Samsung, Lochinvar, Carrier, Bosch, Lennox, Goodman, Kohler, Caleffi, Taco, Honeywell, Resideo, Reme, Rectorseal, Mars, Trion, Grundfos, Amtrol, Webstone, Symmons, Gerber, Burnham, Aeroseal, Insinkerator, etc.), include the brand name VERBATIM as the first word.
+
+  "Ecoer 5-ton heat pump" → "Ecoer 5-ton heat pump" ✓
+  "Ecoer 5-ton heat pump" → "5-ton heat pump" ✗ (brand dropped)
+  "Ecoer 5-ton heat pump" → "Trane 5-ton heat pump" ✗ (brand changed)
+
+# RULE 4 — line_type mapping
+
+- Specific equipment (boilers, heat pumps, air handlers, condensers, water heaters, furnaces, generators, AC units, coils) → 'material'
+- HVAC Labor (day blocks) → 'labor', quantity = number of days mentioned (1 day = 1 unit)
+- Hourly labor (hourly HVAC, hourly plumbing, hourly gas) → 'labor', quantity = hours
+- Manual J / Manual D / Manual S → 'labor'
+- Demo / removal / refrigerant recovery → 'labor'
+- UV light, humidifier, surge protector, zoning kit, duct cleaning → 'addon'
+- Mechanical permits → 'permit'
+- Subcontracted work (electrical sub, etc.) → 'sub'
+- Misc materials (line set, line hide, venting, condensate components, neutralizer, fittings) → 'material'
+
+# RULE 5 — Customer info
+
+- customer_name: extract if mentioned; null if not.
+- customer_address: extract if mentioned; null if not.
+- job_type: always provide a short noun phrase ("Heat pump installation", "Boiler replacement", "Bathroom remodel").
+- work_order_description: 1-2 sentence summary synthesized from what the contractor said.
+
+# Self-check
+
+Before outputting, verify: every line_item description maps to a specific phrase in the narration. If you can't point to the source phrase, the item is hallucinated — remove it.`;
 
 interface ParseRequest {
   narration?: unknown;
@@ -203,7 +223,10 @@ export default async function handler(req: Request): Promise<Response> {
             strict: true,
           },
         },
-        temperature: 0.2,
+        // Deterministic — no creativity. Combined with the strict
+        // "extract only what's said" prompt, prevents the model from
+        // helpfully filling in items it thinks "should" be there.
+        temperature: 0,
       }),
     });
     openaiBody = await openaiRes.json();
