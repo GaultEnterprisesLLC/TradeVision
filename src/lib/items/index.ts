@@ -151,15 +151,38 @@ export interface CatalogMatch {
 }
 
 /**
- * Lowercase + alphanumeric token split + short-token filter.
- * Used both to tokenize a query and to build the DF map.
+ * Tokenize for matching. Two key behaviors that the naive
+ * `split-on-non-alphanumeric` approach gets wrong:
+ *
+ * 1. Fractions ("3/8", "1/4") are captured as compound tokens BEFORE
+ *    the alphanumeric split. Otherwise "3/8 line set" loses the size
+ *    info entirely (the slash becomes a space, then "3" and "8" are
+ *    filtered out as < 2 chars), so all line-set sizes look identical
+ *    to the matcher. Caused the "asked for 3/8, got garbage disposal"
+ *    bug. The catalog stores sizes verbatim ("Line Set 1/4 x 1/2 Inch")
+ *    so haystack.includes('1/4') works once the token is preserved.
+ *
+ * 2. Standalone numbers ≥2 chars (BTU sizes, model #s) survive the
+ *    >=2 filter. Single-digit numbers ("3", "5") are still filtered —
+ *    they're too noisy to be useful as ranking signal on their own.
  */
 function tokenize(s: string): string[] {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length >= 2);
+  const lower = s.toLowerCase();
+  const tokens: string[] = [];
+
+  // Capture compound size tokens (e.g. "3/8", "1/4", "20/40"). These
+  // must come out BEFORE the alphanumeric split nukes the slash.
+  for (const m of lower.matchAll(/\d+\/\d+/g)) {
+    tokens.push(m[0]);
+  }
+
+  // Standard tokenization on the rest.
+  const cleaned = lower.replace(/[^a-z0-9]+/g, ' ');
+  for (const t of cleaned.split(/\s+/)) {
+    if (t.length >= 2) tokens.push(t);
+  }
+
+  return tokens;
 }
 
 /**
