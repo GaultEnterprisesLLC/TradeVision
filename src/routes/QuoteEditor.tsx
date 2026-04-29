@@ -16,6 +16,7 @@ import {
   computeQuoteResult,
   effectivePricing,
   useAddLine,
+  useBulkAddLines,
   useCreateAddon,
   useCreateDiscount,
   useDeleteAddon,
@@ -384,10 +385,31 @@ function LinesCard({
   const [adding, setAdding] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pendingItem, setPendingItem] = useState<Item | null>(null);
+  const bulkAdd = useBulkAddLines();
 
   function closeAdd() {
     setAdding(false);
     setPendingItem(null);
+  }
+
+  async function handleQuickAdd(items: Item[]) {
+    if (!pricing || items.length === 0) return;
+    await bulkAdd.mutateAsync({
+      quoteId: quote.id,
+      pricing,
+      lines: items.map((item, i) => ({
+        line_type: item.line_type,
+        description: cleanItemDescription(item.description),
+        details: item.details,
+        quantity: 1,
+        unit_cost_cents: item.unit_cost_cents,
+        variant: 'all',
+        item_id: item.id,
+        position: lines.length + i,
+        addon_id: null,
+      })),
+    });
+    onAfterMutation();
   }
 
   return (
@@ -453,11 +475,13 @@ function LinesCard({
         onClose={() => setPickerOpen(false)}
         onPick={(result) => {
           setPickerOpen(false);
-          if (result.kind === 'item') {
-            setPendingItem(result.item);
-          } else {
-            setPendingItem(null);
+          if (result.kind === 'items') {
+            // Quick Add — bulk insert, no per-item editor stop.
+            void handleQuickAdd(result.items);
+            return;
           }
+          // Custom — open the blank LineEditor.
+          setPendingItem(null);
           setAdding(true);
         }}
       />
@@ -1202,10 +1226,33 @@ function AddonCard({
 
   const updateAddon = useUpdateAddon();
   const deleteAddon = useDeleteAddon();
+  const bulkAdd = useBulkAddLines();
 
   function closeAdd() {
     setAdding(false);
     setPendingItem(null);
+  }
+
+  async function handleQuickAdd(items: Item[]) {
+    if (!pricing || items.length === 0) return;
+    await bulkAdd.mutateAsync({
+      quoteId: quote.id,
+      pricing,
+      lines: items.map((item, i) => ({
+        line_type: item.line_type,
+        description: cleanItemDescription(item.description),
+        details: item.details,
+        quantity: 1,
+        unit_cost_cents: item.unit_cost_cents,
+        // Lines inside an addon ignore variant — they roll up under the
+        // addon, not under good/better/best.
+        variant: 'all',
+        item_id: item.id,
+        position: lines.length + i,
+        addon_id: addon.id,
+      })),
+    });
+    onAfterMutation();
   }
 
   const headerDirty = name !== addon.name || (addon.description ?? '') !== desc;
@@ -1339,11 +1386,11 @@ function AddonCard({
         onClose={() => setPickerOpen(false)}
         onPick={(result) => {
           setPickerOpen(false);
-          if (result.kind === 'item') {
-            setPendingItem(result.item);
-          } else {
-            setPendingItem(null);
+          if (result.kind === 'items') {
+            void handleQuickAdd(result.items);
+            return;
           }
+          setPendingItem(null);
           setAdding(true);
         }}
       />

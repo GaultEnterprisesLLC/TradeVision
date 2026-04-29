@@ -317,6 +317,60 @@ export function useAddLine() {
   });
 }
 
+// ---------------------------------------------------------------------
+// useBulkAddLines — Quick Add path (multi-select picker → many lines)
+// ---------------------------------------------------------------------
+// Single round-trip insert via Postgres bulk-insert (.insert([...]).
+// We pre-price every line client-side so each row's stored
+// unit_price_cents reflects the current settings at the moment of save.
+
+interface BulkAddArgs {
+  quoteId: string;
+  lines: Omit<QuoteLineItemInsert, 'quote_id' | 'unit_price_cents'>[];
+  pricing: PricingSettings;
+}
+
+async function bulkAddLines({
+  quoteId,
+  lines,
+  pricing,
+}: BulkAddArgs): Promise<QuoteLineItem[]> {
+  if (lines.length === 0) return [];
+  const inserts: QuoteLineItemInsert[] = lines.map((line) => {
+    const priced = priceLine(
+      {
+        line_type: line.line_type,
+        description: line.description,
+        quantity: line.quantity,
+        unit_cost_cents: line.unit_cost_cents,
+        variant: line.variant,
+      },
+      pricing,
+    );
+    return {
+      ...line,
+      quote_id: quoteId,
+      unit_price_cents: priced.unit_price_cents,
+    };
+  });
+  const { data, error } = await supabase
+    .from('quote_line_items')
+    .insert(inserts as Record<string, unknown>[])
+    .select('*');
+  if (error) throw error;
+  return (data ?? []) as QuoteLineItem[];
+}
+
+export function useBulkAddLines() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: bulkAddLines,
+    onSuccess: (_rows, args) => {
+      qc.invalidateQueries({ queryKey: QUOTE_LINES_KEY(args.quoteId) });
+    },
+  });
+}
+
 interface UpdateLineArgs {
   lineId: string;
   quoteId: string;

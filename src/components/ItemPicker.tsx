@@ -7,25 +7,25 @@ import { useSearchableItems } from '@/lib/queries/items';
 import type { Item, LineType } from '@/types/database';
 
 /**
- * ItemPicker — full-screen catalog picker.
+ * ItemPicker — full-screen catalog picker with FieldPulse-style Quick Add.
  *
- * Behavior:
- *   - Opens when the user taps "+ Add line" in the editor.
- *   - Shows a search bar (auto-focused) at the top, then optional
- *     line-type filter chips, then the result list.
- *   - "Custom line" pinned to the top — same flow as before for items
- *     that aren't in the catalog.
- *   - Tap any result → onPick({ kind: 'item', item }) closes the picker
- *     and the editor pre-fills.
- *   - Tap "Custom line" → onPick({ kind: 'custom' }) opens a blank
- *     LineEditor.
+ * Two modes, no extra UI to switch:
+ *   - Tap one item → it goes into the selection tray (badge appears).
+ *   - Tap more items → they accumulate.
+ *   - Bottom bar shows "Add N items" → on tap, all selected items are
+ *     emitted at once via onPickMany() and the picker closes.
+ *   - Tap an already-selected item → de-selects.
+ *   - "+ Custom line" pinned at the top is a separate single-shot path
+ *     for items not in the catalog.
  *
- * No virtualization — we'll add @tanstack/react-virtual when a tenant
- * crosses ~5,000 items. For 879 (Gault) renders fine.
+ * Every selected catalog item later inserts as a line at qty=1 with
+ * variant='all' (or scoped to the addon when applicable). Per-line
+ * tweaks (quantity, variant, description) happen on the line cards
+ * after Quick Add — same place you edit any other line.
  */
 
 export type ItemPickResult =
-  | { kind: 'item'; item: Item; cleanedDescription: string }
+  | { kind: 'items'; items: Item[] }
   | { kind: 'custom' };
 
 interface ItemPickerProps {
@@ -57,13 +57,15 @@ export function ItemPicker({ open, onClose, onPick }: ItemPickerProps) {
   const { data: indexed, isLoading, error } = useSearchableItems();
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<LineType | 'all'>('all');
+  const [selected, setSelected] = useState<Map<string, Item>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Reset state on close so re-opening starts fresh.
+  // Reset state on open/close so re-opening starts fresh.
   useEffect(() => {
     if (!open) {
       setQuery('');
       setTypeFilter('all');
+      setSelected(new Map());
     } else {
       // Auto-focus the search input on open. Small delay so the modal
       // mount animation finishes before the keyboard pops on iOS.
@@ -87,18 +89,41 @@ export function ItemPicker({ open, onClose, onPick }: ItemPickerProps) {
     [indexed, query, typeFilter],
   );
 
+  function toggleItem(item: Item) {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (next.has(item.id)) {
+        next.delete(item.id);
+      } else {
+        next.set(item.id, item);
+      }
+      return next;
+    });
+  }
+
+  function commitSelection() {
+    if (selected.size === 0) return;
+    // Preserve original picking order — ES Maps are insertion-ordered.
+    onPick({ kind: 'items', items: Array.from(selected.values()) });
+  }
+
   if (!open) return null;
+
+  const selectedCount = selected.size;
+  const trayLabel =
+    selectedCount === 0
+      ? 'Tap items to add'
+      : `Add ${selectedCount} item${selectedCount === 1 ? '' : 's'}`;
 
   return (
     <div
       className="fixed inset-0 z-40 bg-[var(--color-carbon)] flex flex-col"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
       role="dialog"
       aria-modal="true"
-      aria-label="Pick a catalog item"
+      aria-label="Pick catalog items"
     >
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -106,7 +131,7 @@ export function ItemPicker({ open, onClose, onPick }: ItemPickerProps) {
           className="text-base uppercase tracking-wider"
           style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }}
         >
-          Add Line
+          Add Lines
         </h2>
         <Button variant="ghost" size="sm" onClick={onClose}>
           Cancel
@@ -147,7 +172,7 @@ export function ItemPicker({ open, onClose, onPick }: ItemPickerProps) {
         </div>
       </div>
 
-      {/* Custom line pinned */}
+      {/* Custom line pinned (single-shot path — bypasses tray) */}
       <button
         type="button"
         onClick={() => onPick({ kind: 'custom' })}
@@ -174,7 +199,10 @@ export function ItemPicker({ open, onClose, onPick }: ItemPickerProps) {
       </button>
 
       {/* Results */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div
+        className="flex-1 min-h-0 overflow-y-auto"
+        style={{ paddingBottom: selectedCount > 0 ? '5rem' : '0' }}
+      >
         {isLoading && (
           <p className="text-sm text-[var(--color-muted)] text-center py-8">
             Loading catalog…
@@ -196,22 +224,44 @@ export function ItemPicker({ open, onClose, onPick }: ItemPickerProps) {
               <ResultRow
                 key={it.id}
                 item={it}
-                onPick={() =>
-                  onPick({
-                    kind: 'item',
-                    item: it,
-                    cleanedDescription: cleanItemDescription(it.description),
-                  })
-                }
+                selected={selected.has(it.id)}
+                onToggle={() => toggleItem(it)}
               />
             ))}
           </ul>
         )}
       </div>
 
-      {/* Footer count */}
-      {!isLoading && !error && (
-        <div className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
+      {/* Bottom action bar — Quick Add. Only renders when there's something
+          to add, so search results aren't covered when the tray is empty. */}
+      {selectedCount > 0 && (
+        <div
+          className="absolute left-0 right-0 bottom-0 px-4 py-3 bg-[var(--color-surface)] border-t border-[var(--color-border)] flex items-center gap-3"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.75rem)' }}
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelected(new Map())}
+          >
+            Clear
+          </Button>
+          <Button
+            size="md"
+            fullWidth
+            onClick={commitSelection}
+          >
+            {trayLabel}
+          </Button>
+        </div>
+      )}
+
+      {/* Footer count — replaced by action bar when selection is active */}
+      {!isLoading && !error && selectedCount === 0 && (
+        <div
+          className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface)]"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.5rem)' }}
+        >
           <p className="text-[11px] text-[var(--color-muted)] tabular-nums">
             {results.length.toLocaleString()} of {indexed?.length.toLocaleString() ?? 0} items
           </p>
@@ -222,23 +272,51 @@ export function ItemPicker({ open, onClose, onPick }: ItemPickerProps) {
 }
 
 // ---------------------------------------------------------------------
-// One row in the result list.
+// One row in the result list — selectable.
 // ---------------------------------------------------------------------
-function ResultRow({ item, onPick }: { item: Item; onPick: () => void }) {
+function ResultRow({
+  item,
+  selected,
+  onToggle,
+}: {
+  item: Item;
+  selected: boolean;
+  onToggle: () => void;
+}) {
   const cleaned = cleanItemDescription(item.description);
   return (
     <li>
       <button
         type="button"
-        onClick={onPick}
+        onClick={onToggle}
+        aria-pressed={selected}
         className={cn(
-          'w-full flex items-start justify-between gap-3 px-4 py-3 text-left',
-          'border-b border-[var(--color-border)]',
-          'hover:bg-[var(--color-surface)] active:bg-[var(--color-surface)] transition-colors',
+          'w-full flex items-start gap-3 px-4 py-3 text-left',
+          'border-b border-[var(--color-border)] transition-colors',
+          selected
+            ? 'bg-[var(--color-green)]/10'
+            : 'hover:bg-[var(--color-surface)] active:bg-[var(--color-surface)]',
         )}
       >
+        {/* Checkbox-style affordance — fills with brand green when selected. */}
+        <div
+          className={cn(
+            'flex-shrink-0 mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors',
+            selected
+              ? 'border-[var(--color-green)] bg-[var(--color-green)] text-[var(--color-carbon)]'
+              : 'border-[var(--color-border)] bg-transparent',
+          )}
+          aria-hidden
+        >
+          {selected && (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+        </div>
+
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-[var(--color-text)] font-medium truncate">
+          <p className={cn('text-sm font-medium truncate', selected ? 'text-[var(--color-text)]' : 'text-[var(--color-text)]')}>
             {cleaned}
           </p>
           <p className="text-[11px] text-[var(--color-muted)] mt-0.5 truncate">
@@ -246,6 +324,7 @@ function ResultRow({ item, onPick }: { item: Item; onPick: () => void }) {
             {item.webb_part_number && ` · ${item.webb_part_number}`}
           </p>
         </div>
+
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <span className="text-sm tabular-nums text-[var(--color-text)] [font-family:var(--font-mono)]">
             {money(item.unit_cost_cents)}
