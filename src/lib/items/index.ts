@@ -123,3 +123,76 @@ export function searchItems(
 }
 
 export type { SearchableItem };
+
+// ---------------------------------------------------------------------
+// AI-fuzzy match — for narration → catalog mapping
+// ---------------------------------------------------------------------
+
+/**
+ * Permissive token-overlap match used by the narration flow. Unlike
+ * matchesQuery (AND semantics: every token must appear), this scores
+ * each candidate by how many query tokens overlap and returns the top
+ * results regardless of whether all tokens hit.
+ *
+ * Why a separate function: Gemini's output ("Ecoer 5-ton heat pump")
+ * may not exactly match the catalog ("32 HVAC Materials | Ecoer
+ * Condenser 4-5 Ton 454B") on every token. Best partial match >
+ * no match.
+ *
+ * Optional `preferLineType` filters candidates first — a query for a
+ * material shouldn't match a labor item even if the words happen to
+ * overlap.
+ */
+export interface CatalogMatch {
+  item: Item;
+  score: number;       // 0..1, fraction of query tokens that hit haystack
+  matchedTokens: number;
+  totalTokens: number;
+}
+
+export function findBestCatalogMatches(
+  query: string,
+  indexed: SearchableItem[],
+  options: {
+    preferLineType?: LineType;
+    limit?: number;        // top-N to return; default 5
+    minScore?: number;     // discard below this; default 0.25
+  } = {},
+): CatalogMatch[] {
+  const { preferLineType, limit = 5, minScore = 0.25 } = options;
+  const tokens = query
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 2);
+  if (tokens.length === 0) return [];
+
+  const candidates = preferLineType
+    ? indexed.filter((s) => s.raw.line_type === preferLineType)
+    : indexed;
+
+  const scored: CatalogMatch[] = [];
+  for (const s of candidates) {
+    let matched = 0;
+    for (const t of tokens) {
+      if (s.haystack.includes(t)) matched++;
+    }
+    if (matched === 0) continue;
+    const score = matched / tokens.length;
+    if (score < minScore) continue;
+    scored.push({
+      item: s.raw,
+      score,
+      matchedTokens: matched,
+      totalTokens: tokens.length,
+    });
+  }
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    // Tie-break: prefer shorter (more specific) descriptions
+    return a.item.description.length - b.item.description.length;
+  });
+
+  return scored.slice(0, limit);
+}

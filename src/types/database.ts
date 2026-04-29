@@ -27,6 +27,14 @@ export type PricingMode = 'markup' | 'margin';
 export type ElectricalScope = 'in_house' | 'subbed';
 export type WebbCostBasis = 'pre_tax' | 'post_tax';
 
+/**
+ * Legacy fixed module list, used by the manual-module picker on /new.
+ * The DB column `quotes.module` is free-text after migration 0008 — the
+ * narration flow generates job names like "Heat pump installation" or
+ * "Bathroom remodel" that don't fit a fixed enum. Use `Module` only
+ * where the legacy picker is involved; treat `Quote['module']` as
+ * `string` everywhere else.
+ */
 export type Module =
   | 'hvac'
   | 'generator'
@@ -222,7 +230,12 @@ export interface Quote {
   fp_quote_id: string | null;
   customer_name: string | null;
   customer_address: string | null;
-  module: Module;
+  /**
+   * Free-text job type (e.g. "Heat pump installation", "Boiler replacement").
+   * Was a fixed enum until migration 0008; the legacy `Module` union still
+   * exists for the manual-picker code path on /new.
+   */
+  module: string;
   status: QuoteStatus;
   /** Top-of-quote scope summary (e.g. "Remove existing HVAC system and install entirely new heat pump..."). */
   work_order_description: string | null;

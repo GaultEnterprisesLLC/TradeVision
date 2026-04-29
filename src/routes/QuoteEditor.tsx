@@ -1532,6 +1532,8 @@ function DiscountsSection({
 // =====================================================================
 
 function moduleLabel(m: Quote['module']): string {
+  // Legacy fixed-enum cases get pretty labels; everything else (the new
+  // free-text values from the narration flow) shows verbatim.
   switch (m) {
     case 'hvac':
       return 'HVAC Changeout';
@@ -1545,5 +1547,7 @@ function moduleLabel(m: Quote['module']): string {
       return 'Plumbing Service';
     case 'plumbing_new_construction':
       return 'New Construction';
+    default:
+      return m || 'Quote';
   }
 }

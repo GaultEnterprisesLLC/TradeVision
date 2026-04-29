@@ -53,7 +53,39 @@ export default function New() {
         </p>
       )}
 
-      <div className="flex flex-col gap-3 mt-2">
+      {/* Narrate flow — voice-first, AI-built quote. Lives above the
+          module list because it's the fastest path for ANY job type. */}
+      <Card
+        interactive
+        onClick={() => company && navigate('/quotes/new/narrate')}
+        className="border-[var(--color-green)]"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <CardTitle>Narrate the job</CardTitle>
+            <p className="text-xs text-[var(--color-muted)] mt-1">
+              Describe the work in plain English. AI builds the quote.
+            </p>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (company) navigate('/quotes/new/narrate');
+            }}
+            disabled={!company}
+          >
+            Start
+          </Button>
+        </div>
+      </Card>
+
+      <div className="text-xs uppercase tracking-wider text-[var(--color-muted)] mt-2">
+        Or — manual module picker
+      </div>
+
+      <div className="flex flex-col gap-3">
         {MODULES.map((m) => {
           const pending = pendingModule === m.id;
           return (
