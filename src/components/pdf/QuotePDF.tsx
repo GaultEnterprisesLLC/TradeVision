@@ -148,11 +148,15 @@ function makeStyles(brand: BrandColors) {
       borderBottomWidth: 2,
       borderBottomColor: brand.primary,
     },
-    headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    // Generous bounding box so a wordmark-with-tagline lockup has room to
-    // breathe at brand-appropriate size; objectFit: 'contain' preserves
-    // ratio so wider/shorter logos (wordmark only) center inside the box.
-    headerLogo: { width: 260, height: 72, objectFit: 'contain' },
+    headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 1 },
+    // Hero-size bounding box so a wordmark-with-tagline lockup reads as
+    // the focal point of the header. objectFit: 'contain' preserves ratio
+    // so wider/shorter logos (wordmark only) center vertically inside.
+    // Note: many wordmark PNGs (incl. Gault's) ship with significant
+    // whitespace around the artwork — this oversized box compensates so
+    // the visible mark lands at brand-appropriate size, not 50% of the
+    // bounding box.
+    headerLogo: { width: 360, height: 96, objectFit: 'contain' },
     headerLogoFallback: { width: 44, height: 44 },
     wordmarkBlock: { flexDirection: 'column' },
     wordmark: {
