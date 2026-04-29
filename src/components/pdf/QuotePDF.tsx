@@ -149,14 +149,15 @@ function makeStyles(brand: BrandColors) {
       borderBottomColor: brand.primary,
     },
     headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 1 },
-    // Hero-size bounding box so a wordmark-with-tagline lockup reads as
-    // the focal point of the header. objectFit: 'contain' preserves ratio
-    // so wider/shorter logos (wordmark only) center vertically inside.
-    // Note: many wordmark PNGs (incl. Gault's) ship with significant
-    // whitespace around the artwork — this oversized box compensates so
-    // the visible mark lands at brand-appropriate size, not 50% of the
-    // bounding box.
-    headerLogo: { width: 360, height: 96, objectFit: 'contain' },
+    // Modest bounding box. Going bigger only helps if the source PNG is
+    // cropped tight to the artwork — most brand PNGs (Gault's included)
+    // ship with significant internal whitespace, which renders as empty
+    // space inside the header at large box sizes. This size is a
+    // pragmatic middle: large enough to read as a logo, small enough
+    // that internal whitespace doesn't dominate the page top. If a
+    // tenant wants a bigger header presence, the answer is to crop the
+    // source PNG, not to grow the box here.
+    headerLogo: { width: 200, height: 56, objectFit: 'contain' },
     headerLogoFallback: { width: 44, height: 44 },
     wordmarkBlock: { flexDirection: 'column' },
     wordmark: {
