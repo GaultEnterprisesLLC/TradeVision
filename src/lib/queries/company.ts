@@ -4,7 +4,10 @@ import type {
   Company,
   CompanySettings,
   CompanySettingsUpdate,
+  CompanyUpdate,
 } from '@/types/database';
+
+const TENANT_ASSETS_BUCKET = 'tenant-assets';
 
 /**
  * Data hooks for the current user's company + settings.
@@ -99,4 +102,78 @@ export function useUpdateSettings() {
       qc.setQueryData([...SETTINGS_KEY, data.company_id], data);
     },
   });
+}
+
+// ---------------------------------------------------------------------
+// useUpdateCompany — patch the company row (branding, address, etc.)
+// ---------------------------------------------------------------------
+
+interface UpdateCompanyArgs {
+  companyId: string;
+  patch: CompanyUpdate;
+}
+
+async function updateCompany({
+  companyId,
+  patch,
+}: UpdateCompanyArgs): Promise<Company> {
+  const { data, error } = await supabase
+    .from('companies')
+    .update(patch as Record<string, unknown>)
+    .eq('id', companyId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Company;
+}
+
+export function useUpdateCompany() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: updateCompany,
+    onSuccess: (data) => {
+      qc.setQueryData(COMPANY_KEY, data);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------
+// uploadCompanyLogo — push an image into Supabase Storage and return the
+// public URL. Caller is responsible for then writing that URL into
+// companies.logo_url via useUpdateCompany.
+// ---------------------------------------------------------------------
+
+/**
+ * Upload a logo image to the tenant-assets bucket under a tenant-scoped
+ * path. Returns the public URL.
+ *
+ * Path layout: <tenant_id>/logo-<timestamp>.<ext>
+ *
+ * Why timestamp-suffix the filename? Cache-busting. If a tenant uploads
+ * a new logo at the same path, browsers + the PDF embed step would
+ * cache the old one. New filename → guaranteed fresh fetch.
+ */
+export async function uploadCompanyLogo(args: {
+  tenantId: string;
+  file: File;
+}): Promise<string> {
+  const { tenantId, file } = args;
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? 'png';
+  const safeExt = /^[a-z0-9]+$/.test(ext) ? ext : 'png';
+  const path = `${tenantId}/logo-${Date.now()}.${safeExt}`;
+
+  const { error: uploadErr } = await supabase.storage
+    .from(TENANT_ASSETS_BUCKET)
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || undefined,
+    });
+  if (uploadErr) throw uploadErr;
+
+  const { data } = supabase.storage.from(TENANT_ASSETS_BUCKET).getPublicUrl(path);
+  if (!data?.publicUrl) {
+    throw new Error('Logo uploaded but could not resolve a public URL.');
+  }
+  return data.publicUrl;
 }

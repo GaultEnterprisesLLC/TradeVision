@@ -43,6 +43,9 @@ const company: Company = {
   phone: '508-648-7321',
   email: 'nick@gaultenterprisesllc.com',
   license_number: null,
+  logo_url: null,
+  brand_color_primary: null,
+  brand_color_accent: null,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };

@@ -12,6 +12,7 @@ import {
 } from '@/components/ui';
 import { PricingTierEditor } from '@/components/PricingTierEditor';
 import { PricePreview } from '@/components/PricePreview';
+import { BrandingCard } from '@/components/BrandingCard';
 import {
   useCompany,
   useCompanySettings,
@@ -175,6 +176,9 @@ export default function Settings() {
           Your numbers. Apply to every quote automatically.
         </p>
       </header>
+
+      {/* ============ BRANDING ============ */}
+      {company && <BrandingCard company={company} />}
 
       {/* ============ PRICING ============ */}
       <Card>

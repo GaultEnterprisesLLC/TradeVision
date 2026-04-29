@@ -91,9 +91,36 @@ export interface Company {
   phone: string | null;
   email: string | null;
   license_number: string | null;
+  // Branding (added by migration 0007)
+  /** Public URL of the company's header logo (typically Supabase Storage). */
+  logo_url: string | null;
+  /** Hex like "#3A557C" — heading text, totals border. Null → pro navy default. */
+  brand_color_primary: string | null;
+  /** Hex like "#FF6720" — selected highlights, section underlines. Null → pro blue default. */
+  brand_color_accent: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/** Subset of Company fields the user is allowed to update from the app. */
+export type CompanyUpdate = Partial<
+  Pick<
+    Company,
+    | 'name'
+    | 'legal_name'
+    | 'address_line1'
+    | 'address_line2'
+    | 'city'
+    | 'state'
+    | 'postal_code'
+    | 'phone'
+    | 'email'
+    | 'license_number'
+    | 'logo_url'
+    | 'brand_color_primary'
+    | 'brand_color_accent'
+  >
+>;
 
 export interface CompanySettings {
   company_id: string;
@@ -370,7 +397,7 @@ export interface Database {
           created_at?: string;
           updated_at?: string;
         };
-        Update: Partial<Company>;
+        Update: CompanyUpdate;
       };
       company_settings: {
         Row: CompanySettings;
