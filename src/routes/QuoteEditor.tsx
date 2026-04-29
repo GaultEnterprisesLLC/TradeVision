@@ -34,8 +34,11 @@ import {
   useUpdateQuote,
 } from '@/lib/queries/quotes';
 import { useCompany, useCompanySettings } from '@/lib/queries/company';
+import { ItemPicker } from '@/components/ItemPicker';
+import { cleanItemDescription } from '@/lib/items';
 import type { PricingResult, PricingSettings } from '@/lib/pricing/types';
 import type {
+  Item,
   LineType,
   Quote,
   QuoteAddon,
@@ -379,6 +382,13 @@ function LinesCard({
   onAfterMutation: () => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pendingItem, setPendingItem] = useState<Item | null>(null);
+
+  function closeAdd() {
+    setAdding(false);
+    setPendingItem(null);
+  }
 
   return (
     <Card>
@@ -412,16 +422,17 @@ function LinesCard({
 
         {adding && pricing && (
           <LineEditor
-            key="new"
+            key={pendingItem ? `new-${pendingItem.id}` : 'new'}
             line={null}
+            initialItem={pendingItem}
             quoteId={quote.id}
             pricing={pricing}
             disabled={false}
             onAfterMutation={() => {
-              setAdding(false);
+              closeAdd();
               onAfterMutation();
             }}
-            onCancel={() => setAdding(false)}
+            onCancel={closeAdd}
           />
         )}
 
@@ -429,13 +440,27 @@ function LinesCard({
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => setAdding(true)}
+            onClick={() => setPickerOpen(true)}
             disabled={!pricing}
           >
             + Add line
           </Button>
         )}
       </div>
+
+      <ItemPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={(result) => {
+          setPickerOpen(false);
+          if (result.kind === 'item') {
+            setPendingItem(result.item);
+          } else {
+            setPendingItem(null);
+          }
+          setAdding(true);
+        }}
+      />
     </Card>
   );
 }
@@ -453,6 +478,8 @@ function LineEditor({
   onCancel,
   /** When set, this LineEditor is scoped to an Add-on Package — variant picker is hidden, addon_id is set on save. */
   addonId,
+  /** When provided (only meaningful when line is null/new), seeds initial form state from a catalog item. */
+  initialItem,
 }: {
   line: QuoteLineItem | null;
   quoteId: string;
@@ -461,17 +488,33 @@ function LineEditor({
   onAfterMutation: () => void;
   onCancel?: () => void;
   addonId?: string;
+  initialItem?: Item | null;
 }) {
   const isNew = line === null;
   const inAddon = addonId != null;
 
-  const [lineType, setLineType] = useState<LineType>(line?.line_type ?? 'material');
-  const [description, setDescription] = useState(line?.description ?? '');
+  // For new lines: prefer existing line state, else seed from a picked
+  // catalog item, else empty defaults.
+  const [lineType, setLineType] = useState<LineType>(
+    line?.line_type ?? initialItem?.line_type ?? 'material',
+  );
+  const [description, setDescription] = useState(
+    line?.description ??
+      (initialItem ? cleanItemDescription(initialItem.description) : ''),
+  );
   const [quantity, setQuantity] = useState<string>(
     line ? String(Number(line.quantity)) : '1',
   );
-  const [unitCost, setUnitCost] = useState<number>(line?.unit_cost_cents ?? 0);
+  const [unitCost, setUnitCost] = useState<number>(
+    line?.unit_cost_cents ?? initialItem?.unit_cost_cents ?? 0,
+  );
   const [variant, setVariant] = useState<Variant>(line?.variant ?? 'all');
+  // Catalog linkage — preserved on save so the line traces back to the
+  // imported item (used for future FieldPulse round-trip).
+  const [itemId] = useState<string | null>(line?.item_id ?? initialItem?.id ?? null);
+  const [details] = useState<string | null>(
+    line?.details ?? initialItem?.details ?? null,
+  );
 
   // Each existing line gets `key={line.id}` from the parent, so a server
   // line change for a *different* row mounts a fresh editor. After a save
@@ -503,10 +546,11 @@ function LineEditor({
         line: {
           line_type: lineType,
           description: description.trim(),
+          details,
           quantity: qty,
           unit_cost_cents: unitCost,
           variant: inAddon ? 'all' : variant,
-          item_id: null,
+          item_id: itemId,
           position: 0,
           addon_id: addonId ?? null,
         },
@@ -1153,9 +1197,16 @@ function AddonCard({
   const [name, setName] = useState(addon.name);
   const [desc, setDesc] = useState(addon.description ?? '');
   const [adding, setAdding] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pendingItem, setPendingItem] = useState<Item | null>(null);
 
   const updateAddon = useUpdateAddon();
   const deleteAddon = useDeleteAddon();
+
+  function closeAdd() {
+    setAdding(false);
+    setPendingItem(null);
+  }
 
   const headerDirty = name !== addon.name || (addon.description ?? '') !== desc;
 
@@ -1257,16 +1308,17 @@ function AddonCard({
           ))}
         {adding && pricing && (
           <LineEditor
-            key="new"
+            key={pendingItem ? `new-${pendingItem.id}` : 'new'}
             line={null}
+            initialItem={pendingItem}
             quoteId={quote.id}
             pricing={pricing}
             disabled={false}
             onAfterMutation={() => {
-              setAdding(false);
+              closeAdd();
               onAfterMutation();
             }}
-            onCancel={() => setAdding(false)}
+            onCancel={closeAdd}
             addonId={addon.id}
           />
         )}
@@ -1274,13 +1326,27 @@ function AddonCard({
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => setAdding(true)}
+            onClick={() => setPickerOpen(true)}
             disabled={!pricing}
           >
             + Add line to package
           </Button>
         )}
       </div>
+
+      <ItemPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={(result) => {
+          setPickerOpen(false);
+          if (result.kind === 'item') {
+            setPendingItem(result.item);
+          } else {
+            setPendingItem(null);
+          }
+          setAdding(true);
+        }}
+      />
 
       {!disabled && (
         <div className="flex justify-end pt-2 border-t border-[var(--color-border)]">
