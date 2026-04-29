@@ -3,17 +3,26 @@
  * =====================================================================
  * Takes a contractor's narration of a job ("Mr. Smith at 12 Pleasant
  * Street, installing a 5-ton Ecoer heat pump, three days of labor…")
- * and returns a structured quote draft via Gemini's structured output.
+ * and returns a structured quote draft via OpenAI's strict JSON schema
+ * mode.
  *
  * The frontend then fuzzy-matches each line_item.description against
  * the tenant's `items` catalog to produce a fully-priced draft.
  *
- * Why an Edge Function: the GEMINI_API_KEY must never reach the
+ * Why an Edge Function: the OPENAI_API_KEY must never reach the
  * browser. This server-side hop keeps it in process.env.
+ *
+ * Why OpenAI (not Gemini): we evaluated both; OpenAI's strict JSON
+ * schema mode (response_format.type='json_schema' + strict:true) gives
+ * the most reliable structured-output guarantees in the industry. For
+ * a brand-sensitive extraction task ("preserve 'Ecoer' verbatim") the
+ * extra reliability matters. Gemini stays in the architecture for the
+ * future video-walkthrough path (Stage 4C) where its native
+ * multimodal video+audio input is the simpler integration.
  *
  * TODO (post-trial): add Supabase JWT verification on the Authorization
  * header so this can't be hit by random callers burning through the
- * Gemini quota. Acceptable for the single-user trial today; required
+ * OpenAI quota. Acceptable for the single-user trial today; required
  * before any tenant beyond Gault touches it.
  * =====================================================================
  */
@@ -22,28 +31,35 @@ export const config = {
   runtime: 'edge',
 };
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+const OPENAI_MODEL = 'gpt-5.4-mini';
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 
 /**
- * JSON Schema returned to Gemini via responseSchema. Gemini guarantees
- * the response matches this shape (subject to the usual LLM caveats).
+ * Strict JSON Schema returned to OpenAI. Constraints under strict mode:
+ *  - Every object must have additionalProperties: false
+ *  - Every property must appear in `required` (no optional fields)
+ *  - To express "may be absent", use a union with null: type: ['string', 'null']
+ *
+ * OpenAI guarantees the response will be valid JSON conforming to this
+ * schema — not a "best effort", a hard contract enforced by the model.
  */
 const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
     customer_name: {
-      type: 'string',
-      description: "Customer's name if mentioned. Empty string if not stated.",
+      type: ['string', 'null'],
+      description:
+        "Customer's name if the contractor mentioned one. null if not stated.",
     },
     customer_address: {
-      type: 'string',
-      description: "Customer's address if mentioned. Empty string if not stated.",
+      type: ['string', 'null'],
+      description:
+        "Customer's address if the contractor mentioned one. null if not stated.",
     },
     job_type: {
       type: 'string',
       description:
-        'Short noun phrase describing the job (e.g. "Heat pump installation", "Boiler replacement", "Bathroom remodel"). Always provide one.',
+        'Short noun phrase describing the job (e.g. "Heat pump installation", "Boiler replacement", "Bathroom remodel"). Always provide one based on the work described.',
     },
     work_order_description: {
       type: 'string',
@@ -58,12 +74,12 @@ const RESPONSE_SCHEMA = {
           description: {
             type: 'string',
             description:
-              'Specific item or service. Include brand/model/size when the contractor mentioned them — the system fuzzy-matches against a parts catalog.',
+              'Specific item or service. Include brand/model/size verbatim when the contractor mentioned them — the system fuzzy-matches against a parts catalog where brand names are the primary signal.',
           },
           quantity: {
             type: 'number',
             description:
-              'Quantity. For HVAC Labor, this is the NUMBER OF DAYS mentioned (1 day = 1 unit). For materials, the count.',
+              'Quantity. For HVAC Labor (day-blocks), this is the NUMBER OF DAYS mentioned (1 day = 1 unit). For materials, the count.',
           },
           line_type: {
             type: 'string',
@@ -73,10 +89,20 @@ const RESPONSE_SCHEMA = {
           },
         },
         required: ['description', 'quantity', 'line_type'],
+        additionalProperties: false,
       },
+      description:
+        'Every distinct item or service the contractor mentioned. One per line.',
     },
   },
-  required: ['job_type', 'work_order_description', 'line_items'],
+  required: [
+    'customer_name',
+    'customer_address',
+    'job_type',
+    'work_order_description',
+    'line_items',
+  ],
+  additionalProperties: false,
 };
 
 const SYSTEM_PROMPT = `You are an assistant that parses a contractor's verbal narration of a residential mechanical / HVAC / plumbing / gas job into a structured quote draft.
@@ -100,14 +126,24 @@ Rules for line_items:
 - Recovery / refrigerant work → line_type='labor'.
 - Hourly plumbing / hourly HVAC / hourly gas → line_type='labor', quantity = hours mentioned.
 
+BRAND PRESERVATION IS CRITICAL. If the contractor mentions a brand or manufacturer (Ecoer, Trane, Rheem, Navien, Samsung, Lochinvar, Carrier, Bosch, Lennox, Goodman, Kohler, Caleffi, Taco, Honeywell, Resideo, Reme, Rectorseal, Mars, Trion, Grundfos, Amtrol, Webstone, Symmons, Gerber, Aeroseal, etc.), include the brand name VERBATIM as the FIRST WORD of the line description. Do NOT paraphrase, normalize, or generalize.
+
+Examples:
+  "Ecoer 5-ton heat pump" → description: "Ecoer 5-ton heat pump" ✓
+  "Ecoer 5-ton heat pump" → description: "5-ton heat pump" ✗ (brand dropped)
+  "Ecoer 5-ton heat pump" → description: "Trane 5-ton heat pump" ✗ (brand changed)
+  "Navien NHB-150H boiler" → description: "Navien NHB-150H" ✓
+  "Navien NHB-150H boiler" → description: "150K BTU boiler" ✗ (brand + model dropped)
+
+The catalog is brand-specific; dropping or substituting the brand name will produce wrong matches downstream.
+
 Description rules:
-- BRAND PRESERVATION IS CRITICAL. If the contractor mentions a brand or manufacturer (Ecoer, Trane, Rheem, Navien, Samsung, Lochinvar, Carrier, Bosch, Lennox, Goodman, Kohler, Caleffi, Taco, Honeywell, Resideo, Reme, Rectorseal, Mars, Trion, Grundfos, Amtrol, Webstone, Symmons, Gerber, Ecoer, Aeroseal, etc.), include the brand name VERBATIM as the FIRST WORD of the line description. Do NOT paraphrase, normalize, or generalize. "Ecoer 5-ton heat pump" stays "Ecoer 5-ton heat pump" — never "5-ton heat pump" or "heat pump 5-ton" or "Trane equivalent". The catalog is brand-specific; dropping the brand name will produce wrong matches.
 - Include model numbers verbatim when mentioned (e.g. "Navien NHB-150H", "Rheem RA15AY60AJ1NA").
-- Include size/tonnage exactly as said ("5-ton", "150K BTU", "60 amp").
+- Include size/tonnage exactly as said ("5-ton", "150K BTU", "60 amp", "1/4 inch line set").
 - Don't invent items the contractor didn't mention. If they say "the usual fittings", don't list specific fittings.
 - One line per item. Don't combine ("3-ton condenser AND coil" → two lines).
 
-Output ONLY the JSON object matching the schema. No prose, no explanations.`;
+If the contractor doesn't mention a customer name, set customer_name to null. Same for customer_address. Always provide a job_type and a work_order_description (synthesized from what they said).`;
 
 interface ParseRequest {
   narration?: unknown;
@@ -136,69 +172,72 @@ export default async function handler(req: Request): Promise<Response> {
     );
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return jsonResponse(
-      { error: 'Server is missing GEMINI_API_KEY' },
+      { error: 'Server is missing OPENAI_API_KEY' },
       500,
     );
   }
 
-  // ----- Call Gemini with structured output -----
-  let geminiBody: unknown;
+  // ----- Call OpenAI Chat Completions with strict JSON schema -----
+  let openaiBody: unknown;
   try {
-    const geminiRes = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+    const openaiRes = await fetch(OPENAI_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: narration }],
-          },
+        model: OPENAI_MODEL,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: narration },
         ],
-        systemInstruction: {
-          parts: [{ text: SYSTEM_PROMPT }],
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'quote_draft',
+            schema: RESPONSE_SCHEMA,
+            strict: true,
+          },
         },
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-        },
+        temperature: 0.2,
       }),
     });
-    geminiBody = await geminiRes.json();
-    if (!geminiRes.ok) {
+    openaiBody = await openaiRes.json();
+    if (!openaiRes.ok) {
       return jsonResponse(
-        { error: 'Gemini error', detail: geminiBody },
+        { error: 'OpenAI error', detail: openaiBody },
         502,
       );
     }
   } catch (err) {
     return jsonResponse(
-      { error: 'Gemini request failed', detail: String(err) },
+      { error: 'OpenAI request failed', detail: String(err) },
       502,
     );
   }
 
   // ----- Extract structured payload from response -----
-  const candidates =
-    (geminiBody as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> })
-      .candidates ?? [];
-  const text = candidates[0]?.content?.parts?.[0]?.text;
-  if (!text) {
+  const choices = (openaiBody as { choices?: Array<{ message?: { content?: string } }> })
+    .choices ?? [];
+  const content = choices[0]?.message?.content;
+  if (!content) {
     return jsonResponse(
-      { error: 'Empty response from Gemini', raw: geminiBody },
+      { error: 'Empty response from OpenAI', raw: openaiBody },
       502,
     );
   }
 
+  // Strict mode guarantees valid JSON, but parse defensively.
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(content);
   } catch {
     return jsonResponse(
-      { error: 'Gemini returned non-JSON', text },
+      { error: 'OpenAI returned non-JSON', text: content },
       502,
     );
   }

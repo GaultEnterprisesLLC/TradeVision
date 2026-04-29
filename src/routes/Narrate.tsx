@@ -116,7 +116,16 @@ export default function Narrate() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(body.error ?? `HTTP ${res.status}`);
+        // Surface the API's `detail` field so failures are diagnosable
+        // without opening devtools. Common case: OpenAI returns a quota /
+        // model / schema error and we want to see what.
+        const detailStr = body.detail
+          ? typeof body.detail === 'string'
+            ? body.detail
+            : JSON.stringify(body.detail).slice(0, 300)
+          : '';
+        const msg = body.error ?? `HTTP ${res.status}`;
+        throw new Error(detailStr ? `${msg} — ${detailStr}` : msg);
       }
       const data = body as ParsedNarration;
       setParsed(data);
