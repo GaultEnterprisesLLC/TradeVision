@@ -149,7 +149,10 @@ function makeStyles(brand: BrandColors) {
       borderBottomColor: brand.primary,
     },
     headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    headerLogo: { width: 132, height: 44, objectFit: 'contain' },
+    // Generous bounding box so a wordmark-with-tagline lockup has room to
+    // breathe at brand-appropriate size; objectFit: 'contain' preserves
+    // ratio so wider/shorter logos (wordmark only) center inside the box.
+    headerLogo: { width: 260, height: 72, objectFit: 'contain' },
     headerLogoFallback: { width: 44, height: 44 },
     wordmarkBlock: { flexDirection: 'column' },
     wordmark: {
@@ -420,23 +423,34 @@ function TradeVisionAperture({ size = 12 }: { size?: number }) {
 // ---------------------------------------------------------------------
 
 function Header({ doc, styles }: { doc: PDFDocumentModel; styles: Styles }) {
+  // When a tenant has uploaded a wordmark logo, the logo IS the company
+  // name + tagline — repeating them as text right next to the artwork
+  // reads as the same name three times in the same color. Render only
+  // the logo in that case; the company name still appears in the
+  // "Prepared by" block below for contact-info purposes.
+  //
+  // Fallback (no logo): show the TradeVision aperture + the company
+  // name + legal_name as text, since there's no artwork carrying that
+  // information.
   return (
     <View style={styles.headerRow}>
       <View style={styles.headerLeft}>
         {doc.company.logo_url ? (
           <Image src={doc.company.logo_url} style={styles.headerLogo} />
         ) : (
-          <View style={styles.headerLogoFallback}>
-            <TradeVisionAperture size={44} />
-          </View>
+          <>
+            <View style={styles.headerLogoFallback}>
+              <TradeVisionAperture size={44} />
+            </View>
+            <View style={styles.wordmarkBlock}>
+              <Text style={styles.wordmark}>{doc.company.name}</Text>
+              {doc.company.legal_name &&
+                doc.company.legal_name !== doc.company.name && (
+                  <Text style={styles.wordmarkTagline}>{doc.company.legal_name}</Text>
+                )}
+            </View>
+          </>
         )}
-        <View style={styles.wordmarkBlock}>
-          <Text style={styles.wordmark}>{doc.company.name}</Text>
-          {doc.company.legal_name &&
-            doc.company.legal_name !== doc.company.name && (
-              <Text style={styles.wordmarkTagline}>{doc.company.legal_name}</Text>
-            )}
-        </View>
       </View>
       <View style={styles.headerRight}>
         <Text style={styles.headerLabel}>Quote</Text>
