@@ -129,25 +129,59 @@ export type { SearchableItem };
 // ---------------------------------------------------------------------
 
 /**
- * Permissive token-overlap match used by the narration flow. Unlike
- * matchesQuery (AND semantics: every token must appear), this scores
- * each candidate by how many query tokens overlap and returns the top
- * results regardless of whether all tokens hit.
+ * IDF-weighted token-overlap match used by the narration flow. Tokens
+ * that are rare across the catalog (brand names like "Ecoer", model
+ * numbers like "EODA19H-4860ABA") contribute heavily to the score;
+ * common tokens ("5", "ton", "inch") barely move the needle.
  *
- * Why a separate function: Gemini's output ("Ecoer 5-ton heat pump")
- * may not exactly match the catalog ("32 HVAC Materials | Ecoer
- * Condenser 4-5 Ton 454B") on every token. Best partial match >
- * no match.
+ * Why this matters: a query "Ecoer 5-ton heat pump" should NOT match
+ * "Trane 5 Ton Condenser" even though both share "5 ton" — the brand
+ * mismatch is the dominant signal. Plain token overlap (the previous
+ * implementation) gave them similar scores, leading to wrong matches
+ * like Samsung/Rheem/Navien selected when the user said "Ecoer".
  *
  * Optional `preferLineType` filters candidates first — a query for a
- * material shouldn't match a labor item even if the words happen to
- * overlap.
+ * material shouldn't match a labor item even if words overlap.
  */
 export interface CatalogMatch {
   item: Item;
-  score: number;       // 0..1, fraction of query tokens that hit haystack
+  score: number;       // 0..1, IDF-weighted match fraction
   matchedTokens: number;
   totalTokens: number;
+}
+
+/**
+ * Lowercase + alphanumeric token split + short-token filter.
+ * Used both to tokenize a query and to build the DF map.
+ */
+function tokenize(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 2);
+}
+
+/**
+ * Document frequency map: how many indexed items contain each token.
+ * Computed on demand inside findBestCatalogMatches; cached against the
+ * input array reference (memoized by useSearchableItems upstream, so
+ * stable across renders within a session).
+ */
+const DF_CACHE = new WeakMap<SearchableItem[], Map<string, number>>();
+
+function getDFMap(indexed: SearchableItem[]): Map<string, number> {
+  const cached = DF_CACHE.get(indexed);
+  if (cached) return cached;
+  const df = new Map<string, number>();
+  for (const s of indexed) {
+    const seen = new Set(tokenize(s.haystack));
+    for (const t of seen) {
+      df.set(t, (df.get(t) ?? 0) + 1);
+    }
+  }
+  DF_CACHE.set(indexed, df);
+  return df;
 }
 
 export function findBestCatalogMatches(
@@ -156,29 +190,45 @@ export function findBestCatalogMatches(
   options: {
     preferLineType?: LineType;
     limit?: number;        // top-N to return; default 5
-    minScore?: number;     // discard below this; default 0.25
+    minScore?: number;     // discard below this; default 0.4
   } = {},
 ): CatalogMatch[] {
-  const { preferLineType, limit = 5, minScore = 0.25 } = options;
-  const tokens = query
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length >= 2);
+  const { preferLineType, limit = 5, minScore = 0.4 } = options;
+  const tokens = tokenize(query);
   if (tokens.length === 0) return [];
 
   const candidates = preferLineType
     ? indexed.filter((s) => s.raw.line_type === preferLineType)
     : indexed;
+  if (candidates.length === 0) return [];
+
+  // IDF over the FULL catalog (not the line-type-filtered subset) — a
+  // brand name's rarity is a property of the whole catalog, not the
+  // material/labor partition.
+  const df = getDFMap(indexed);
+  const totalDocs = indexed.length;
+
+  // Pre-compute IDF for each query token. Higher IDF = rarer = more
+  // discriminative. Smoothing constant prevents div-by-zero / log(0).
+  const idfPerToken: number[] = tokens.map((t) => {
+    const docCount = df.get(t) ?? 0;
+    return Math.log((totalDocs + 1) / (docCount + 1)) + 1;
+  });
+  const totalIDF = idfPerToken.reduce((a, b) => a + b, 0);
+  if (totalIDF === 0) return [];
 
   const scored: CatalogMatch[] = [];
   for (const s of candidates) {
+    let weighted = 0;
     let matched = 0;
-    for (const t of tokens) {
-      if (s.haystack.includes(t)) matched++;
+    for (let i = 0; i < tokens.length; i++) {
+      if (s.haystack.includes(tokens[i])) {
+        weighted += idfPerToken[i];
+        matched++;
+      }
     }
     if (matched === 0) continue;
-    const score = matched / tokens.length;
+    const score = weighted / totalIDF;
     if (score < minScore) continue;
     scored.push({
       item: s.raw,

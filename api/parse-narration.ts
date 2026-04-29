@@ -101,7 +101,9 @@ Rules for line_items:
 - Hourly plumbing / hourly HVAC / hourly gas → line_type='labor', quantity = hours mentioned.
 
 Description rules:
-- Be specific. Include brand/model/size/tonnage when the contractor mentioned them — the description gets fuzzy-matched against a catalog of 879 items, so more detail = better match.
+- BRAND PRESERVATION IS CRITICAL. If the contractor mentions a brand or manufacturer (Ecoer, Trane, Rheem, Navien, Samsung, Lochinvar, Carrier, Bosch, Lennox, Goodman, Kohler, Caleffi, Taco, Honeywell, Resideo, Reme, Rectorseal, Mars, Trion, Grundfos, Amtrol, Webstone, Symmons, Gerber, Ecoer, Aeroseal, etc.), include the brand name VERBATIM as the FIRST WORD of the line description. Do NOT paraphrase, normalize, or generalize. "Ecoer 5-ton heat pump" stays "Ecoer 5-ton heat pump" — never "5-ton heat pump" or "heat pump 5-ton" or "Trane equivalent". The catalog is brand-specific; dropping the brand name will produce wrong matches.
+- Include model numbers verbatim when mentioned (e.g. "Navien NHB-150H", "Rheem RA15AY60AJ1NA").
+- Include size/tonnage exactly as said ("5-ton", "150K BTU", "60 amp").
 - Don't invent items the contractor didn't mention. If they say "the usual fittings", don't list specific fittings.
 - One line per item. Don't combine ("3-ton condenser AND coil" → two lines).
 
